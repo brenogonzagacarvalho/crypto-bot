@@ -1,0 +1,27 @@
+# Variáveis de ambiente e credenciais
+.env
+
+# Logs do sistema
+logs/
+*.log
+
+# Caches do Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# PyInstaller (Arquivos de Build e Compilação)
+build/
+dist/
+*.spec
+
+# Ambientes Virtuais
+venv/
+env/
+.venv/
+
+# Arquivos do OS (Mac/Windows)
+.DS_Store
+Thumbs.db
