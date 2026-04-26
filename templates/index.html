@@ -46,9 +46,9 @@
                             <h2 style="margin-bottom: 0;">Mercado</h2>
                             <select id="coin-selector" class="coin-dropdown">
                                 <option value="BTC">Bitcoin (BTC)</option>
-                                <option value="SOL">Solana (SOL)</option>
                                 <option value="ETH">Ethereum (ETH)</option>
-                                <option value="XRP">Ripple (XRP)</option>
+                                <option value="SOL">Solana (SOL)</option>
+                                <option value="MULTI">MULTI (BTC, ETH, SOL)</option>
                             </select>
                         </div>
                         <div class="price-display">
@@ -73,6 +73,13 @@
                         <div class="buttons" style="margin-bottom: 1rem;">
                             <button id="btn-martingale" class="btn btn-danger" onclick="startBot('martingale')" style="background-color: #8b5cf6;">🎲 MARTINGALE</button>
                             <button id="btn-trend" class="btn btn-danger" onclick="startBot('trend')" style="background-color: #3b82f6;">🌊 TREND SCALPER</button>
+                        </div>
+                        <div class="buttons" style="margin-bottom: 1rem;">
+                            <button id="btn-revmart" class="btn btn-danger" onclick="startBot('reverse_martingale')" style="background-color: #ef4444; box-shadow: 0 0 15px rgba(239,68,68,0.4);">🔥 REV. MARTINGALE</button>
+                            <button id="btn-scalp10x" class="btn btn-danger" onclick="startBot('scalping_10x')" style="background-color: #10b981; box-shadow: 0 0 15px rgba(16,185,129,0.4);">🛡️ SCALPING 10X</button>
+                        </div>
+                        <div class="buttons" style="margin-bottom: 1rem;">
+                            <button id="btn-survival" class="btn btn-danger" onclick="startBot('survival')" style="background-color: #f59e0b; box-shadow: 0 0 15px rgba(245,158,11,0.6); width: 100%;">⚔️ SURVIVAL SCALPER ($6 a $15)</button>
                         </div>
                         <div class="buttons">
                             <button id="btn-stop" class="btn btn-danger" onclick="stopBot()" disabled>⏹ PARAR BOT</button>

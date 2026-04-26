@@ -1,0 +1,19 @@
+{
+  "survival_scalper": {
+    "max_leverage": 20,
+    "risk_per_trade": 0.20,
+    "max_daily_loss_pct": 0.30,
+    "min_balance": 3.0,
+    "take_profit_pct": 1.5,
+    "stop_loss_pct": 0.8,
+    "cooldown_seconds": 120,
+    "min_winrate_to_continue": 40
+  },
+  "sniper": {
+    "max_leverage": 50,
+    "risk_per_trade": 0.10,
+    "max_daily_loss_pct": 0.50,
+    "take_profit_pct": 2.0,
+    "stop_loss_pct": 1.0
+  }
+}

@@ -5,7 +5,7 @@ import csv
 from datetime import datetime
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from core.market_data import fetch_historical_data, calculate_rsi
+from core.market_data import fetch_ohlcv_data, calculate_rsi, calculate_ema, calculate_macd
 from core.shared_state import bot_state, add_log
 from core.balance_utils import get_unified_balance, get_available_margin_usd, enable_btc_collateral, place_maker_entry
 
@@ -20,7 +20,7 @@ def init_trade_log():
             writer = csv.writer(f)
             writer.writerow([
                 'Data/Hora', 'Moeda', 'Tipo', 'Direção', 'Preço',
-                'RSI', 'Mão ($)', 'Alavancagem', 'TP Alvo', 'SL Alvo',
+                'RSI', 'EMA200', 'MACD_Hist', 'Mão ($)', 'Alavancagem', 'TP Alvo', 'SL Alvo',
                 'Saldo USD', 'Win Streak', 'Status', 'Detalhes'
             ])
 
@@ -31,9 +31,10 @@ def log_trade(symbol, tipo, direcao, preco, rsi, mao, leverage, tp, sl, saldo, w
             writer.writerow([
                 datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 symbol, tipo, direcao, f'{preco:.2f}',
-                f'{rsi:.1f}' if rsi else '-', f'{mao:.2f}', f'{leverage}x',
+                f'{rsi:.1f}' if rsi else '-', f'{detalhes.get("ema200", "-")}', f'{detalhes.get("macd", "-")}',
+                f'{mao:.2f}', f'{leverage}x',
                 f'{tp:.2f}' if tp else '-', f'{sl:.2f}' if sl else '-',
-                f'{saldo:.2f}', wins, status, detalhes
+                f'{saldo:.2f}', wins, status, detalhes.get("msg", "")
             ])
     except Exception as e:
         add_log(f"Aviso: Não foi possível gravar log CSV: {e}")
@@ -56,7 +57,7 @@ def set_margin_leverage(exchange, symbol, leverage):
     except:
         return False
 
-def run_reverse_martingale(exchange, symbol='BTC/USDT:USDT', leverage=100, check_interval=60):
+def run_reverse_martingale(exchange, symbol='BTC/USDT:USDT', leverage=100, check_interval=30):
     is_multi = (symbol == "MULTI")
     symbols_to_scan = ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT"] if is_multi else [symbol]
     
@@ -107,6 +108,7 @@ def run_reverse_martingale(exchange, symbol='BTC/USDT:USDT', leverage=100, check
     daily_target_pct = 0.23
     daily_target_usd = starting_balance * (1 + daily_target_pct)
     add_log(f"🎯 Meta diária: ${daily_target_usd:.2f} (+{daily_target_pct*100:.0f}% sobre ${starting_balance:.2f})")
+    add_log(f"🧠 Filtros Ativos: EMA 200 + MACD Confirmation | TF: 5m")
     add_log(f"🃏 Mão inicial: ${base_trade_amount:.2f} (80% da margem, máx $1.00)")
     
     try:
@@ -165,99 +167,65 @@ def run_reverse_martingale(exchange, symbol='BTC/USDT:USDT', leverage=100, check
                     
                     coin_name = sym.split('/')[0]
                     bot_state["coin_name"] = coin_name
-                    closes = fetch_historical_data(exchange, sym, timeframe='1m', limit=50)
-                    if not closes or len(closes) < 15:
-                        continue
-                        
+                    
+                    # Busca 210 velas de 5m para ter dados suficientes para EMA 200
+                    ohlcv = fetch_ohlcv_data(exchange, sym, timeframe='5m', limit=210)
+                    if not ohlcv: continue
+                    
+                    closes = ohlcv['c']
                     current_price = closes[-1]
                     rsi = calculate_rsi(closes, period=14)
-                    if rsi is None:
-                        continue
+                    ema200 = calculate_ema(closes, period=200)
+                    macd, signal, hist = calculate_macd(closes)
+                    
+                    if rsi is None or ema200 is None or hist is None: continue
                         
                     bot_state["current_price"] = current_price
                     bot_state["rsi"] = rsi
                     bot_state["rsi_status"] = f"Rev.Mart W:{wins_consecutivos}"
                     
-                    rsi_bar = "█" * int(rsi / 5) + "░" * (20 - int(rsi / 5))
-                    rsi_status = "Neutro"
-                    if rsi >= 70: rsi_status = "SOBRECOMPRADO 🔴"
-                    elif rsi <= 30: rsi_status = "SOBREVENDIDO 🟢"
+                    trend = "ALTA 📈" if current_price > ema200 else "BAIXA 📉"
+                    macd_status = "FORÇA ⚡" if abs(hist) > abs(hist*0.1) else "FRACO ☁️"
                     
-                    add_log(f"  {coin_name}: ${current_price:,.2f} | RSI [{rsi_bar}] {rsi:.1f} {rsi_status}")
-                    log_trade(sym, 'SCAN', '-', current_price, rsi, current_trade_amount, leverage, 0, 0, collateral_usd, wins_consecutivos, rsi_status)
+                    add_log(f"  {coin_name}: ${current_price:,.2f} | RSI: {rsi:.1f} | Tendência: {trend} | MACD: {hist:.2f}")
                     
-                    # [MELHORIA #5] Atualiza histórico de RSI e verifica confirmação
+                    detalhes_scan = {"ema200": f"{ema200:.2f}", "macd": f"{hist:.4f}", "msg": f"Trend: {trend}"}
+                    log_trade(sym, 'SCAN', '-', current_price, rsi, current_trade_amount, leverage, 0, 0, collateral_usd, wins_consecutivos, trend, detalhes_scan)
+                    
                     prev_rsi = rsi_history.get(sym, rsi)
                     rsi_history[sym] = rsi
                     
-                    # Gatilho LONG: RSI <= 30 E RSI está SUBINDO (confirmação de reversão)
-                    if rsi <= 30 and rsi > prev_rsi:
-                        add_log(f"🔥 SINAL LONG CONFIRMADO em {coin_name}! RSI: {prev_rsi:.1f}→{rsi:.1f}")
+                    # GATILHO LONG: Preço > EMA200 (Tendência de Alta) + RSI Subindo + MACD Histograma Positivo
+                    if current_price > ema200 and rsi <= 35 and rsi > prev_rsi and hist > 0:
+                        add_log(f"🔥 SINAL LONG PROFISSIONAL em {coin_name}!")
                         amount_to_buy = (current_trade_amount * leverage) / current_price
                         tp_price = round(current_price * 1.01, 2)
-                        sl_price = round(current_price * 0.995, 2)
+                        sl_price = round(current_price * 0.992, 2)
                         entry_limit_price = round(current_price, 2)
                         
                         try:
-                            add_log(f"📤 Limit PostOnly BUY @ ${entry_limit_price:,.2f} (taxa maker 0.02%)...")
-                            order, filled = place_maker_entry(
-                                exchange, sym, 'buy', amount_to_buy,
-                                entry_limit_price, tp_price, sl_price, max_wait=15
-                            )
-                            
+                            order, filled = place_maker_entry(exchange, sym, 'buy', amount_to_buy, entry_limit_price, tp_price, sl_price)
                             if filled:
-                                in_position = True
-                                active_symbol = sym
-                                entry_price = current_price
-                                entry_side = 'LONG'
+                                in_position, active_symbol, entry_price, entry_side = True, sym, current_price, 'LONG'
                                 found_entry = True
-                                add_log(f"✅ LONG executado (maker)! TP: ${tp_price:,.2f} | SL: ${sl_price:,.2f}")
-                                log_trade(sym, 'ENTRADA', 'LONG', current_price, rsi, current_trade_amount, leverage, tp_price, sl_price, collateral_usd, wins_consecutivos, '✅ SUCESSO (maker)', f"OrderID: {order.get('id', 'N/A')}")
-                            else:
-                                add_log(f"⏳ Ordem não preenchida em 15s. Cancelada.")
-                                log_trade(sym, 'ENTRADA', 'LONG', current_price, rsi, current_trade_amount, leverage, tp_price, sl_price, collateral_usd, wins_consecutivos, '⏳ NÃO PREENCHIDA', 'Limit PostOnly timeout')
-                        except Exception as e:
-                            add_log(f"❌ Erro ({coin_name}): {e}")
-                            log_trade(sym, 'ENTRADA', 'LONG', current_price, rsi, current_trade_amount, leverage, tp_price, sl_price, collateral_usd, wins_consecutivos, '❌ ERRO', str(e))
-                            add_log(f"⏸️ Pausando {check_interval}s...")
-                            break
+                                log_trade(sym, 'ENTRADA', 'LONG', current_price, rsi, current_trade_amount, leverage, tp_price, sl_price, collateral_usd, wins_consecutivos, '✅ SUCESSO', detalhes_scan)
+                        except Exception as e: add_log(f"❌ Erro: {e}")
                             
-                    # Gatilho SHORT: RSI >= 70 E RSI está DESCENDO (confirmação de reversão)
-                    elif rsi >= 70 and rsi < prev_rsi:
-                        add_log(f"🔥 SINAL SHORT CONFIRMADO em {coin_name}! RSI: {prev_rsi:.1f}→{rsi:.1f}")
+                    # GATILHO SHORT: Preço < EMA200 (Tendência de Baixa) + RSI Caindo + MACD Histograma Negativo
+                    elif current_price < ema200 and rsi >= 65 and rsi < prev_rsi and hist < 0:
+                        add_log(f"🔥 SINAL SHORT PROFISSIONAL em {coin_name}!")
                         amount_to_sell = (current_trade_amount * leverage) / current_price
                         tp_price = round(current_price * 0.99, 2)
-                        sl_price = round(current_price * 1.005, 2)
+                        sl_price = round(current_price * 1.008, 2)
                         entry_limit_price = round(current_price, 2)
                         
                         try:
-                            add_log(f"📤 Limit PostOnly SELL @ ${entry_limit_price:,.2f} (taxa maker 0.02%)...")
-                            order, filled = place_maker_entry(
-                                exchange, sym, 'sell', amount_to_sell,
-                                entry_limit_price, tp_price, sl_price, max_wait=15
-                            )
-                            
+                            order, filled = place_maker_entry(exchange, sym, 'sell', amount_to_sell, entry_limit_price, tp_price, sl_price)
                             if filled:
-                                in_position = True
-                                active_symbol = sym
-                                entry_price = current_price
-                                entry_side = 'SHORT'
+                                in_position, active_symbol, entry_price, entry_side = True, sym, current_price, 'SHORT'
                                 found_entry = True
-                                add_log(f"✅ SHORT executado (maker)! TP: ${tp_price:,.2f} | SL: ${sl_price:,.2f}")
-                                log_trade(sym, 'ENTRADA', 'SHORT', current_price, rsi, current_trade_amount, leverage, tp_price, sl_price, collateral_usd, wins_consecutivos, '✅ SUCESSO (maker)', f"OrderID: {order.get('id', 'N/A')}")
-                            else:
-                                add_log(f"⏳ Ordem não preenchida em 15s. Cancelada.")
-                                log_trade(sym, 'ENTRADA', 'SHORT', current_price, rsi, current_trade_amount, leverage, tp_price, sl_price, collateral_usd, wins_consecutivos, '⏳ NÃO PREENCHIDA', 'Limit PostOnly timeout')
-                        except Exception as e:
-                            add_log(f"❌ Erro ({coin_name}): {e}")
-                            log_trade(sym, 'ENTRADA', 'SHORT', current_price, rsi, current_trade_amount, leverage, tp_price, sl_price, collateral_usd, wins_consecutivos, '❌ ERRO', str(e))
-                            add_log(f"⏸️ Pausando {check_interval}s...")
-                            break
-                    
-                    elif rsi <= 30 and rsi <= prev_rsi:
-                        add_log(f"  ⏳ {coin_name}: RSI caindo ({prev_rsi:.1f}→{rsi:.1f}), aguardando reversão...")
-                    elif rsi >= 70 and rsi >= prev_rsi:
-                        add_log(f"  ⏳ {coin_name}: RSI subindo ({prev_rsi:.1f}→{rsi:.1f}), aguardando reversão...")
+                                log_trade(sym, 'ENTRADA', 'SHORT', current_price, rsi, current_trade_amount, leverage, tp_price, sl_price, collateral_usd, wins_consecutivos, '✅ SUCESSO', detalhes_scan)
+                        except Exception as e: add_log(f"❌ Erro: {e}")
                     
                     time.sleep(0.5)
             

@@ -1,3 +1,4 @@
+import os
 import threading
 from flask import Flask, render_template, jsonify, request
 from core.connection import get_exchange, check_connection
@@ -8,7 +9,9 @@ from strategies.sniper_leverage import run_sniper_leverage
 from strategies.martingale_sniper import run_martingale_sniper
 from strategies.trend_scalper import run_trend_scalper
 from strategies.reverse_martingale import run_reverse_martingale
+from strategies.reverse_martingale_pro import run_reverse_martingale_pro
 from strategies.scalping_10x import run_scalping_10x
+from strategies.survival_scalper import run_survival_scalper
 import time
 
 app = Flask(__name__)
@@ -134,7 +137,12 @@ def start_bot():
     
     data = request.get_json() or {}
     strategy = data.get('strategy', 'spot')
-    symbol = data.get('symbol', 'BTC/USDT')
+    symbol = data.get('symbol', 'BTC/USDT:USDT')
+    
+    estrategias_multi = ['survival', 'reverse_martingale', 'scalping_10x', 'sniper']
+    if symbol == 'MULTI' and strategy not in estrategias_multi:
+        add_log(f"⚠️ A estratégia '{strategy}' não suporta MULTI. Usando BTC por padrão.")
+        symbol = 'BTC/USDT:USDT'
     
     if strategy == 'sniper':
         add_log(f"Comando de INICIAR SNIPER recebido para {symbol}...")
@@ -146,11 +154,14 @@ def start_bot():
         add_log(f"Comando de INICIAR TREND SCALPER recebido para {symbol}...")
         thread = threading.Thread(target=run_trend_scalper, args=(exchange, symbol))
     elif strategy == 'reverse_martingale':
-        add_log(f"Comando de INICIAR REVERSE MARTINGALE recebido para {symbol}...")
-        thread = threading.Thread(target=run_reverse_martingale, args=(exchange, symbol))
+        add_log(f"Comando de INICIAR REVERSE MARTINGALE PRO recebido para {symbol}...")
+        thread = threading.Thread(target=run_reverse_martingale_pro, args=(exchange, symbol))
     elif strategy == 'scalping_10x':
         add_log(f"Comando de INICIAR SCALPING 10X recebido para {symbol}...")
         thread = threading.Thread(target=run_scalping_10x, args=(exchange, symbol))
+    elif strategy == 'survival':
+        add_log(f"Comando de INICIAR SURVIVAL SCALPER recebido para {symbol}...")
+        thread = threading.Thread(target=run_survival_scalper, args=(exchange, symbol))
     else:
         add_log(f"Comando de INICIAR SPOT recebido para {symbol}...")
         thread = threading.Thread(target=run_live_predictor, args=(exchange, symbol))
@@ -173,6 +184,6 @@ def stop_bot():
 if __name__ == '__main__':
     print("Iniciando Servidor Web do Bot...")
     print("Conectando na Bybit e carregando saldo...")
-    init_exchange()  # Lê o saldo logo que o servidor sobe
+    init_exchange()
     print("Acesse http://127.0.0.1:5000 no seu navegador!")
     app.run(host='127.0.0.1', port=5000, debug=False)
