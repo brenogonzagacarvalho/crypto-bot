@@ -13,74 +13,106 @@
 <body>
     <div class="dashboard">
         <header>
-            <h1><span class="highlight">Bybit</span> Trade Bot</h1>
+            <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                <h1><span class="highlight">Bybit</span> Trade Bot</h1>
+                <nav class="tab-nav">
+                    <button id="tab-btn-dashboard" class="tab-btn active" onclick="switchTab('dashboard')">Dashboard</button>
+                    <button id="tab-btn-positions" class="tab-btn" onclick="switchTab('positions')">Posições Abertas <span id="pos-count" class="mini-badge">0</span></button>
+                </nav>
+            </div>
             <div id="status-badge" class="badge">🔴 Desligado</div>
         </header>
 
         <main>
-            <div class="cards-container">
-                <!-- Card de Saldo -->
-                <div class="glass-card balance-card">
-                    <h2>Carteira (Bybit)</h2>
-                    <div class="balance-item">
-                        <span class="label" id="coin-label">Moeda Base</span>
-                        <span class="value" id="coin-balance">0.00000000</span>
+            <!-- Aba: Dashboard -->
+            <div id="tab-dashboard" class="tab-content active">
+                <div class="cards-container">
+                    <!-- Card de Saldo -->
+                    <div class="glass-card balance-card">
+                        <h2>Carteira (Bybit)</h2>
+                        <div class="balance-item">
+                            <span class="label" id="coin-label">Moeda Base</span>
+                            <span class="value" id="coin-balance">0.00000000</span>
+                        </div>
+                        <div class="balance-item">
+                            <span class="label">Dólar (USDT)</span>
+                            <span class="value" id="usdt-balance">0.00</span>
+                        </div>
                     </div>
-                    <div class="balance-item">
-                        <span class="label">Dólar (USDT)</span>
-                        <span class="value" id="usdt-balance">0.00</span>
+
+                    <!-- Card de Mercado -->
+                    <div class="glass-card market-card">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                            <h2 style="margin-bottom: 0;">Mercado</h2>
+                            <select id="coin-selector" class="coin-dropdown">
+                                <option value="BTC">Bitcoin (BTC)</option>
+                                <option value="SOL">Solana (SOL)</option>
+                                <option value="ETH">Ethereum (ETH)</option>
+                                <option value="XRP">Ripple (XRP)</option>
+                            </select>
+                        </div>
+                        <div class="price-display">
+                            <span class="currency">$</span>
+                            <span id="current-price">0.00</span>
+                        </div>
+                        <div class="indicator">
+                            <span class="label" id="indicator-label">RSI (14)</span>
+                            <span class="value" id="rsi-value">0.0</span>
+                        </div>
+                        <div class="indicator-status" id="rsi-status">Neutro</div>
+                    </div>
+
+                    <!-- Card de Controle -->
+                    <div class="glass-card control-card">
+                        <h2>Controles</h2>
+                        <p class="subtitle">Escolha sua Estratégia de Guerra</p>
+                        <div class="buttons" style="margin-bottom: 1rem;">
+                            <button id="btn-start" class="btn btn-primary" onclick="startBot('spot')">▶ INICIAR SPOT</button>
+                            <button id="btn-sniper" class="btn btn-danger" onclick="startBot('sniper')" style="background-color: #f97316;">🎯 SNIPER 20X</button>
+                        </div>
+                        <div class="buttons" style="margin-bottom: 1rem;">
+                            <button id="btn-martingale" class="btn btn-danger" onclick="startBot('martingale')" style="background-color: #8b5cf6;">🎲 MARTINGALE</button>
+                            <button id="btn-trend" class="btn btn-danger" onclick="startBot('trend')" style="background-color: #3b82f6;">🌊 TREND SCALPER</button>
+                        </div>
+                        <div class="buttons">
+                            <button id="btn-stop" class="btn btn-danger" onclick="stopBot()" disabled>⏹ PARAR BOT</button>
+                        </div>
                     </div>
                 </div>
 
-                <!-- Card de Mercado -->
-                <div class="glass-card market-card">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
-                        <h2 style="margin-bottom: 0;">Mercado</h2>
-                        <select id="coin-selector" class="coin-dropdown">
-                            <option value="BTC">Bitcoin (BTC)</option>
-                            <option value="SOL">Solana (SOL)</option>
-                            <option value="ETH">Ethereum (ETH)</option>
-                            <option value="XRP">Ripple (XRP)</option>
-                        </select>
-                    </div>
-                    <div class="price-display">
-                        <span class="currency">$</span>
-                        <span id="current-price">0.00</span>
-                    </div>
-                    <div class="indicator">
-                        <span class="label" id="indicator-label">RSI (14)</span>
-                        <span class="value" id="rsi-value">0.0</span>
-                    </div>
-                    <div class="indicator-status" id="rsi-status">Neutro</div>
-                </div>
-
-                <!-- Card de Controle -->
-                <div class="glass-card control-card">
-                    <h2>Controles</h2>
-                    <p class="subtitle">Escolha sua Estratégia de Guerra</p>
-                    <div class="buttons" style="margin-bottom: 1rem;">
-                        <button id="btn-start" class="btn btn-primary" onclick="startBot('spot')">▶ INICIAR SPOT (Seguro)</button>
-                        <button id="btn-sniper" class="btn btn-danger" onclick="startBot('sniper')" style="background-color: #f97316; box-shadow: 0 0 15px rgba(249,115,22,0.4);">🎯 ALAVANCAGEM SNIPER</button>
-                    </div>
-                    <div class="buttons" style="margin-bottom: 1rem;">
-                        <button id="btn-martingale" class="btn btn-danger" onclick="startBot('martingale')" style="background-color: #8b5cf6; box-shadow: 0 0 15px rgba(139,92,246,0.4);">🎲 MARTINGALE RSI</button>
-                        <button id="btn-trend" class="btn btn-danger" onclick="startBot('trend')" style="background-color: #3b82f6; box-shadow: 0 0 15px rgba(59,130,246,0.4);">🌊 TREND SCALPER (Seguro)</button>
-                    </div>
-                    <div class="buttons" style="margin-bottom: 1rem;">
-                        <button id="btn-revmart" class="btn btn-danger" onclick="startBot('reverse_martingale')" style="background-color: #ef4444; box-shadow: 0 0 15px rgba(239,68,68,0.4);">🔥 REV. MARTINGALE ($100/DIA)</button>
-                        <button id="btn-scalp10x" class="btn btn-danger" onclick="startBot('scalping_10x')" style="background-color: #10b981; box-shadow: 0 0 15px rgba(16,185,129,0.4);">🛡️ SCALPING 10X ($15/SEM)</button>
-                    </div>
-                    <div class="buttons">
-                        <button id="btn-stop" class="btn btn-danger" onclick="stopBot()" disabled>⏹ PARAR BOT</button>
+                <!-- Terminal de Logs -->
+                <div class="glass-card terminal-card">
+                    <h2>Live Terminal</h2>
+                    <div class="terminal-window" id="terminal-logs">
+                        <p class="log-line">Aguardando inicialização...</p>
                     </div>
                 </div>
             </div>
 
-            <!-- Terminal de Logs -->
-            <div class="glass-card terminal-card">
-                <h2>Live Terminal</h2>
-                <div class="terminal-window" id="terminal-logs">
-                    <p class="log-line">Bem-vindo ao Bybit Bot. Aguardando inicialização...</p>
+            <!-- Aba: Posições -->
+            <div id="tab-positions" class="tab-content">
+                <div class="glass-card" style="width: 100%; max-width: 100%;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                        <h2>Posições em Aberto</h2>
+                        <button class="btn btn-danger" onclick="manualCloseAll()" style="width: auto; padding: 0.5rem 1.5rem;">⏹ FECHAR TODAS AS POSIÇÕES</button>
+                    </div>
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Símbolo</th>
+                                    <th>Lado</th>
+                                    <th>Leverage</th>
+                                    <th>Tamanho</th>
+                                    <th>Preço Entrada</th>
+                                    <th>P&L (USDT)</th>
+                                </tr>
+                            </thead>
+                            <tbody id="positions-body">
+                                <tr><td colspan="6" style="text-align:center;">Nenhuma posição aberta.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </main>

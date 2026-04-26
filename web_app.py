@@ -67,6 +67,56 @@ def refresh_balance():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/positions')
+def get_positions():
+    """Busca todas as posições abertas na Bybit."""
+    global exchange
+    if not exchange:
+        exchange = get_exchange()
+    try:
+        # Busca posições linear (USDT Perpetuals)
+        positions = exchange.fetch_positions(params={'category': 'linear', 'settleCoin': 'USDT'})
+        open_positions = []
+        for p in positions:
+            if float(p.get('contracts', 0) or 0) > 0:
+                open_positions.append({
+                    "symbol": p['symbol'],
+                    "side": p['side'],
+                    "contracts": p['contracts'],
+                    "entryPrice": p['entryPrice'],
+                    "unrealizedPnl": p['unrealizedPnl'],
+                    "leverage": p['leverage']
+                })
+        return jsonify({"positions": open_positions, "status": "ok"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/close_all', methods=['POST'])
+def close_all():
+    """Fecha todas as posições abertas imediatamente."""
+    global exchange
+    if not exchange:
+        exchange = get_exchange()
+    try:
+        positions = exchange.fetch_positions(params={'category': 'linear', 'settleCoin': 'USDT'})
+        closed = 0
+        for p in positions:
+            contracts = float(p.get('contracts', 0) or 0)
+            if contracts > 0:
+                close_side = 'sell' if p['side'].lower() == 'long' else 'buy'
+                exchange.create_order(
+                    symbol=p['symbol'],
+                    type='market',
+                    side=close_side,
+                    amount=contracts,
+                    params={'reduceOnly': True}
+                )
+                add_log(f"MANUAL: Posição {p['symbol']} fechada via Dashboard.")
+                closed += 1
+        return jsonify({"message": f"{closed} posições fechadas com sucesso.", "status": "ok"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/start', methods=['POST'])
 def start_bot():
     global exchange

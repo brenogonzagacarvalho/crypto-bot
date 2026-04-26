@@ -1,11 +1,53 @@
 import time
 import sys
 import os
+import csv
+from datetime import datetime
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.market_data import fetch_historical_data, calculate_rsi
 from core.shared_state import bot_state, add_log
-from core.balance_utils import get_unified_balance
+from core.balance_utils import get_unified_balance, get_available_margin_usd, enable_btc_collateral, place_maker_entry
+
+# --- SISTEMA DE LOG EM CSV ---
+LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'logs')
+LOG_FILE = os.path.join(LOG_DIR, 'reverse_martingale_trades.csv')
+
+def init_trade_log():
+    os.makedirs(LOG_DIR, exist_ok=True)
+    if not os.path.exists(LOG_FILE):
+        with open(LOG_FILE, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                'Data/Hora', 'Moeda', 'Tipo', 'Direção', 'Preço',
+                'RSI', 'Mão ($)', 'Alavancagem', 'TP Alvo', 'SL Alvo',
+                'Saldo USD', 'Win Streak', 'Status', 'Detalhes'
+            ])
+
+def log_trade(symbol, tipo, direcao, preco, rsi, mao, leverage, tp, sl, saldo, wins, status, detalhes=''):
+    try:
+        with open(LOG_FILE, 'a', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                symbol, tipo, direcao, f'{preco:.2f}',
+                f'{rsi:.1f}' if rsi else '-', f'{mao:.2f}', f'{leverage}x',
+                f'{tp:.2f}' if tp else '-', f'{sl:.2f}' if sl else '-',
+                f'{saldo:.2f}', wins, status, detalhes
+            ])
+    except Exception as e:
+        add_log(f"Aviso: Não foi possível gravar log CSV: {e}")
+
+# --- COLATERAL ---
+def get_collateral_usd(exchange):
+    """Usa a margem real disponível (totalAvailableBalance) da Bybit UTA."""
+    available, total_equity = get_available_margin_usd(exchange)
+    if available > 0.01:
+        btc_bal = get_unified_balance(exchange, 'BTC')
+        if btc_bal > 0.0:
+            return available, 'BTC', btc_bal
+        return available, 'USDT', available
+    return 0.0, 'NONE', 0.0
 
 def set_margin_leverage(exchange, symbol, leverage):
     try:
@@ -15,114 +57,268 @@ def set_margin_leverage(exchange, symbol, leverage):
         return False
 
 def run_reverse_martingale(exchange, symbol='BTC/USDT:USDT', leverage=100, check_interval=60):
-    add_log(f"🔥 [REVERSE MARTINGALE] Iniciado em {symbol} com {leverage}x!")
+    is_multi = (symbol == "MULTI")
+    symbols_to_scan = ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT"] if is_multi else [symbol]
+    
+    init_trade_log()
+    
+    add_log(f"🔥 [REVERSE MARTINGALE v2] {'MULTI-SCAN' if is_multi else symbol} com {leverage}x!")
+    add_log(f"📋 Log: logs/reverse_martingale_trades.csv")
     bot_state["is_running"] = True
     bot_state["status"] = f"🔥 Rev. Martingale ({leverage}x)"
     
-    base_coin = symbol.split('/')[0]
-    bot_state["coin_name"] = base_coin
+    bot_state["coin_name"] = "SCANNING" if is_multi else symbol.split('/')[0]
     bot_state["coin_balance"] = 0.0 
     
-    set_margin_leverage(exchange, symbol, leverage)
+    # Habilita BTC como colateral
+    if enable_btc_collateral(exchange):
+        add_log("🔓 BTC habilitado como colateral!")
     
-    base_trade_amount = 1.0  # Mão base de $1
+    # Detecta colateral
+    collateral_usd, collateral_coin, collateral_raw = get_collateral_usd(exchange)
+    bot_state["usdt_balance"] = collateral_usd
+    
+    if collateral_coin == 'BTC':
+        add_log(f"💰 Colateral: {collateral_raw:.8f} BTC | Margem: ${collateral_usd:.2f} USD")
+        bot_state["coin_balance"] = collateral_raw
+    else:
+        add_log(f"💰 Margem: ${collateral_usd:.2f} USDT")
+    
+    for sym in symbols_to_scan:
+        set_margin_leverage(exchange, sym, leverage)
+    
+    # [MELHORIA #4] Mão ajustada ao saldo real (nunca mais que 80% da margem)
+    base_trade_amount = min(1.0, collateral_usd * 0.80)
     current_trade_amount = base_trade_amount
     in_position = False
+    active_symbol = None
+    entry_price = 0.0
+    entry_side = None
     
     wins_consecutivos = 0
     meta_wins = 6
+    scan_count = 0
+    
+    # [MELHORIA #5] Histórico de RSI para confirmação de reversão
+    rsi_history = {}  # {symbol: [rsi_anterior, rsi_atual]}
+    
+    # Meta diária: 23%
+    starting_balance = collateral_usd
+    daily_target_pct = 0.23
+    daily_target_usd = starting_balance * (1 + daily_target_pct)
+    add_log(f"🎯 Meta diária: ${daily_target_usd:.2f} (+{daily_target_pct*100:.0f}% sobre ${starting_balance:.2f})")
+    add_log(f"🃏 Mão inicial: ${base_trade_amount:.2f} (80% da margem, máx $1.00)")
     
     try:
         while bot_state["is_running"]:
-            usdt_balance = get_unified_balance(exchange, 'USDT')
-            bot_state["usdt_balance"] = usdt_balance
+            scan_count += 1
             
-            # Gerenciamento Pós-Trade
-            if not in_position:
-                if wins_consecutivos >= meta_wins:
-                    add_log(f"🏆 META DE 100 DÓLARES ATINGIDA! ({wins_consecutivos} vitórias consecutivas)")
+            collateral_usd, collateral_coin, collateral_raw = get_collateral_usd(exchange)
+            bot_state["usdt_balance"] = collateral_usd
+            if collateral_coin == 'BTC':
+                bot_state["coin_balance"] = collateral_raw
+            
+            # Meta diária (exige lucro mínimo de $0.50 para evitar falso positivo)
+            if not in_position and collateral_usd >= daily_target_usd:
+                lucro = collateral_usd - starting_balance
+                if lucro >= 0.50:  # Ignora flutuações de centavos no colateral BTC
+                    add_log(f"{'='*50}")
+                    add_log(f"🏆🏆🏆 META DIÁRIA BATIDA! 🏆🏆🏆")
+                    add_log(f"Início: ${starting_balance:.2f} → Final: ${collateral_usd:.2f}")
+                    add_log(f"Lucro: +${lucro:.2f} (+{(lucro/starting_balance)*100:.1f}%)")
+                    add_log(f"{'='*50}")
+                    log_trade('-', 'META_DIARIA', '-', 0, 0, 0, leverage, 0, 0, collateral_usd, wins_consecutivos, '🏆 META BATIDA', f"Lucro: +${lucro:.2f}")
+                    bot_state["status"] = "🏆 Meta Diária Atingida!"
                     bot_state["is_running"] = False
                     break
-                    
-            if current_trade_amount > usdt_balance:
-                current_trade_amount = usdt_balance * 0.95 # All-in seguro se não tiver saldo total
+            
+            # Meta de wins
+            if not in_position and wins_consecutivos >= meta_wins:
+                add_log(f"🏆 META DE WINS! ({wins_consecutivos} vitórias)")
+                log_trade('-', 'META_WINS', '-', 0, 0, 0, leverage, 0, 0, collateral_usd, wins_consecutivos, '🏆 WINS')
+                bot_state["is_running"] = False
+                break
+            
+            # [MELHORIA #4] Ajusta mão ao saldo disponível
+            if current_trade_amount > collateral_usd * 0.80:
+                current_trade_amount = collateral_usd * 0.80
                 
-            if usdt_balance < 1.0:
-                add_log("❌ Saldo insuficiente para operar (< $1.00). Desligando...")
+            if collateral_usd < 0.50:
+                add_log(f"❌ Saldo insuficiente: ${collateral_usd:.2f}. Desligando...")
                 bot_state["is_running"] = False
                 break
 
-            closes = fetch_historical_data(exchange, symbol, timeframe='1m', limit=50)
-            if not closes or len(closes) < 15:
-                time.sleep(check_interval)
+            # [MELHORIA #3] Verifica margem ANTES de tentar operar
+            if not in_position and current_trade_amount < 0.10:
+                add_log(f"⚠️ Mão muito pequena (${current_trade_amount:.2f}). Margem insuficiente para operar.")
+                for _ in range(check_interval):
+                    if not bot_state["is_running"]: break
+                    time.sleep(1)
                 continue
-                
-            current_price = closes[-1]
-            rsi = calculate_rsi(closes, period=14)
-            
-            if rsi is None:
-                continue
-                
-            bot_state["current_price"] = current_price
-            bot_state["rsi"] = rsi
-            bot_state["rsi_status"] = f"Rev. Mart. Win:{wins_consecutivos}"
-                
-            # Gatilhos Agressivos (RSI 30/70 para não demorar muito a entrar)
+
             if not in_position:
-                if rsi <= 30: # Gatilho de Long
-                    add_log(f"🔥 SINAL LONG! Mão: ${current_trade_amount:.2f} | Win Streak: {wins_consecutivos}")
-                    try:
-                        amount_to_buy = (current_trade_amount * leverage) / current_price 
-                        exchange.create_market_buy_order(symbol, amount_to_buy)
-                        in_position = True
+                add_log(f"── Scanner #{scan_count} | ${collateral_usd:.2f} ({collateral_coin}) | Mão: ${current_trade_amount:.2f} | Wins: {wins_consecutivos}/{meta_wins} ──")
+                
+                found_entry = False
+                for sym in symbols_to_scan:
+                    if not bot_state["is_running"] or found_entry: break
+                    
+                    coin_name = sym.split('/')[0]
+                    bot_state["coin_name"] = coin_name
+                    closes = fetch_historical_data(exchange, sym, timeframe='1m', limit=50)
+                    if not closes or len(closes) < 15:
+                        continue
                         
-                        # TP de 100% ROE para garantir dobra da mão
-                        tp_price = current_price * 1.01 
-                        exchange.create_order(symbol, 'limit', 'sell', amount_to_buy, tp_price, params={'reduceOnly': True})
+                    current_price = closes[-1]
+                    rsi = calculate_rsi(closes, period=14)
+                    if rsi is None:
+                        continue
                         
-                        # SL rigido de 0.5% (Preço, = 50% de perda do capital aportado)
-                        sl_price = current_price * 0.995
-                        exchange.create_order(symbol, 'stop', 'sell', amount_to_buy, sl_price, params={'reduceOnly': True, 'stopPrice': sl_price})
-                    except Exception as e:
-                        add_log(f"❌ Erro na ordem: {e}")
-                        time.sleep(10)
+                    bot_state["current_price"] = current_price
+                    bot_state["rsi"] = rsi
+                    bot_state["rsi_status"] = f"Rev.Mart W:{wins_consecutivos}"
+                    
+                    rsi_bar = "█" * int(rsi / 5) + "░" * (20 - int(rsi / 5))
+                    rsi_status = "Neutro"
+                    if rsi >= 70: rsi_status = "SOBRECOMPRADO 🔴"
+                    elif rsi <= 30: rsi_status = "SOBREVENDIDO 🟢"
+                    
+                    add_log(f"  {coin_name}: ${current_price:,.2f} | RSI [{rsi_bar}] {rsi:.1f} {rsi_status}")
+                    log_trade(sym, 'SCAN', '-', current_price, rsi, current_trade_amount, leverage, 0, 0, collateral_usd, wins_consecutivos, rsi_status)
+                    
+                    # [MELHORIA #5] Atualiza histórico de RSI e verifica confirmação
+                    prev_rsi = rsi_history.get(sym, rsi)
+                    rsi_history[sym] = rsi
+                    
+                    # Gatilho LONG: RSI <= 30 E RSI está SUBINDO (confirmação de reversão)
+                    if rsi <= 30 and rsi > prev_rsi:
+                        add_log(f"🔥 SINAL LONG CONFIRMADO em {coin_name}! RSI: {prev_rsi:.1f}→{rsi:.1f}")
+                        amount_to_buy = (current_trade_amount * leverage) / current_price
+                        tp_price = round(current_price * 1.01, 2)
+                        sl_price = round(current_price * 0.995, 2)
+                        entry_limit_price = round(current_price, 2)
                         
-                elif rsi >= 70: # Gatilho de Short
-                    add_log(f"🔥 SINAL SHORT! Mão: ${current_trade_amount:.2f} | Win Streak: {wins_consecutivos}")
-                    try:
-                        amount_to_sell = (current_trade_amount * leverage) / current_price
-                        exchange.create_market_sell_order(symbol, amount_to_sell)
-                        in_position = True
-                        
-                        tp_price = current_price * 0.99 
-                        exchange.create_order(symbol, 'limit', 'buy', amount_to_sell, tp_price, params={'reduceOnly': True})
-                        
-                        sl_price = current_price * 1.005
-                        exchange.create_order(symbol, 'stop', 'buy', amount_to_sell, sl_price, params={'reduceOnly': True, 'stopPrice': sl_price})
-                    except Exception as e:
-                        add_log(f"❌ Erro na ordem: {e}")
-                        time.sleep(10)
-            
-            elif in_position:
-                try:
-                    positions = exchange.fetch_positions([symbol])
-                    if not positions or float(positions[0].get('contracts', 0)) == 0:
-                        in_position = False
-                        add_log("Trade encerrado. Avaliando resultado...")
-                        
-                        new_usdt_balance = get_unified_balance(exchange, 'USDT')
-                        if new_usdt_balance > usdt_balance: # Ganhou
-                            wins_consecutivos += 1
-                            current_trade_amount *= 2 # Juros compostos / Reverse Martingale
-                            add_log(f"✅ WIN! Lucro obtido. Dobrando a mão para ${current_trade_amount:.2f}")
-                        else: # Perdeu
-                            wins_consecutivos = 0
-                            current_trade_amount = base_trade_amount
-                            add_log(f"🔴 LOSS. Resetando a mão para ${base_trade_amount:.2f}")
+                        try:
+                            add_log(f"📤 Limit PostOnly BUY @ ${entry_limit_price:,.2f} (taxa maker 0.02%)...")
+                            order, filled = place_maker_entry(
+                                exchange, sym, 'buy', amount_to_buy,
+                                entry_limit_price, tp_price, sl_price, max_wait=15
+                            )
                             
-                        bot_state["usdt_balance"] = new_usdt_balance
-                except:
-                    pass
+                            if filled:
+                                in_position = True
+                                active_symbol = sym
+                                entry_price = current_price
+                                entry_side = 'LONG'
+                                found_entry = True
+                                add_log(f"✅ LONG executado (maker)! TP: ${tp_price:,.2f} | SL: ${sl_price:,.2f}")
+                                log_trade(sym, 'ENTRADA', 'LONG', current_price, rsi, current_trade_amount, leverage, tp_price, sl_price, collateral_usd, wins_consecutivos, '✅ SUCESSO (maker)', f"OrderID: {order.get('id', 'N/A')}")
+                            else:
+                                add_log(f"⏳ Ordem não preenchida em 15s. Cancelada.")
+                                log_trade(sym, 'ENTRADA', 'LONG', current_price, rsi, current_trade_amount, leverage, tp_price, sl_price, collateral_usd, wins_consecutivos, '⏳ NÃO PREENCHIDA', 'Limit PostOnly timeout')
+                        except Exception as e:
+                            add_log(f"❌ Erro ({coin_name}): {e}")
+                            log_trade(sym, 'ENTRADA', 'LONG', current_price, rsi, current_trade_amount, leverage, tp_price, sl_price, collateral_usd, wins_consecutivos, '❌ ERRO', str(e))
+                            add_log(f"⏸️ Pausando {check_interval}s...")
+                            break
+                            
+                    # Gatilho SHORT: RSI >= 70 E RSI está DESCENDO (confirmação de reversão)
+                    elif rsi >= 70 and rsi < prev_rsi:
+                        add_log(f"🔥 SINAL SHORT CONFIRMADO em {coin_name}! RSI: {prev_rsi:.1f}→{rsi:.1f}")
+                        amount_to_sell = (current_trade_amount * leverage) / current_price
+                        tp_price = round(current_price * 0.99, 2)
+                        sl_price = round(current_price * 1.005, 2)
+                        entry_limit_price = round(current_price, 2)
+                        
+                        try:
+                            add_log(f"📤 Limit PostOnly SELL @ ${entry_limit_price:,.2f} (taxa maker 0.02%)...")
+                            order, filled = place_maker_entry(
+                                exchange, sym, 'sell', amount_to_sell,
+                                entry_limit_price, tp_price, sl_price, max_wait=15
+                            )
+                            
+                            if filled:
+                                in_position = True
+                                active_symbol = sym
+                                entry_price = current_price
+                                entry_side = 'SHORT'
+                                found_entry = True
+                                add_log(f"✅ SHORT executado (maker)! TP: ${tp_price:,.2f} | SL: ${sl_price:,.2f}")
+                                log_trade(sym, 'ENTRADA', 'SHORT', current_price, rsi, current_trade_amount, leverage, tp_price, sl_price, collateral_usd, wins_consecutivos, '✅ SUCESSO (maker)', f"OrderID: {order.get('id', 'N/A')}")
+                            else:
+                                add_log(f"⏳ Ordem não preenchida em 15s. Cancelada.")
+                                log_trade(sym, 'ENTRADA', 'SHORT', current_price, rsi, current_trade_amount, leverage, tp_price, sl_price, collateral_usd, wins_consecutivos, '⏳ NÃO PREENCHIDA', 'Limit PostOnly timeout')
+                        except Exception as e:
+                            add_log(f"❌ Erro ({coin_name}): {e}")
+                            log_trade(sym, 'ENTRADA', 'SHORT', current_price, rsi, current_trade_amount, leverage, tp_price, sl_price, collateral_usd, wins_consecutivos, '❌ ERRO', str(e))
+                            add_log(f"⏸️ Pausando {check_interval}s...")
+                            break
+                    
+                    elif rsi <= 30 and rsi <= prev_rsi:
+                        add_log(f"  ⏳ {coin_name}: RSI caindo ({prev_rsi:.1f}→{rsi:.1f}), aguardando reversão...")
+                    elif rsi >= 70 and rsi >= prev_rsi:
+                        add_log(f"  ⏳ {coin_name}: RSI subindo ({prev_rsi:.1f}→{rsi:.1f}), aguardando reversão...")
+                    
+                    time.sleep(0.5)
+            
+            elif in_position and active_symbol:
+                try:
+                    coin_name = active_symbol.split('/')[0]
+                    bot_state["coin_name"] = coin_name
+                    closes = fetch_historical_data(exchange, active_symbol, timeframe='1m', limit=15)
+                    
+                    if closes:
+                        current_price = closes[-1]
+                        bot_state["current_price"] = current_price
+                        
+                        if entry_side == 'LONG':
+                            pnl_pct = ((current_price - entry_price) / entry_price) * 100 * leverage
+                        else:
+                            pnl_pct = ((entry_price - current_price) / entry_price) * 100 * leverage
+                        
+                        pnl_emoji = "🟢" if pnl_pct >= 0 else "🔴"
+                        add_log(f"📊 {coin_name} {entry_side} | ${entry_price:,.2f} → ${current_price:,.2f} | P&L: {pnl_emoji} {pnl_pct:+.1f}%")
+                        
+                    positions = exchange.fetch_positions([active_symbol])
+                    has_position = False
+                    for pos in positions:
+                        contracts = float(pos.get('contracts', 0))
+                        if contracts > 0:
+                            has_position = True
+                            unrealized_pnl = float(pos.get('unrealizedPnl', 0))
+                            add_log(f"  💰 Contratos: {contracts} | PnL: ${unrealized_pnl:.4f}")
+                            break
+                    
+                    if not has_position:
+                        in_position = False
+                        active_symbol = None
+                        
+                        new_collateral_usd, _, _ = get_collateral_usd(exchange)
+                        resultado = new_collateral_usd - collateral_usd
+                        
+                        if resultado > 0:
+                            wins_consecutivos += 1
+                            current_trade_amount *= 2
+                            # [MELHORIA #4] Limita mão ao saldo real
+                            current_trade_amount = min(current_trade_amount, new_collateral_usd * 0.80)
+                            add_log(f"{'='*50}")
+                            add_log(f"✅ WIN #{wins_consecutivos}! +${resultado:.4f} | Mão: ${current_trade_amount:.2f}")
+                            add_log(f"{'='*50}")
+                            log_trade('-', 'SAÍDA', entry_side or '-', current_price if closes else 0, 0, current_trade_amount, leverage, 0, 0, new_collateral_usd, wins_consecutivos, '✅ WIN', f"+${resultado:.4f}")
+                        else:
+                            wins_consecutivos = 0
+                            base_trade_amount = min(1.0, new_collateral_usd * 0.80)
+                            current_trade_amount = base_trade_amount
+                            add_log(f"{'='*50}")
+                            add_log(f"🔴 LOSS. ${resultado:.4f} | Reset mão: ${current_trade_amount:.2f}")
+                            add_log(f"{'='*50}")
+                            log_trade('-', 'SAÍDA', entry_side or '-', current_price if closes else 0, 0, current_trade_amount, leverage, 0, 0, new_collateral_usd, wins_consecutivos, '🔴 LOSS', f"${resultado:.4f}")
+                        
+                        entry_price = 0.0
+                        entry_side = None
+                        bot_state["usdt_balance"] = new_collateral_usd
+                except Exception as e:
+                    add_log(f"⚠️ Aviso posição: {e}")
                 
             for _ in range(check_interval):
                 if not bot_state["is_running"]:
@@ -130,7 +326,8 @@ def run_reverse_martingale(exchange, symbol='BTC/USDT:USDT', leverage=100, check
                 time.sleep(1)
                 
     except Exception as e:
-        add_log(f"Erro Crítico Rev. Martingale: {e}")
+        add_log(f"Erro Crítico: {e}")
+        log_trade('-', 'ERRO_CRITICO', '-', 0, 0, 0, leverage, 0, 0, 0, wins_consecutivos, '💥 CRASH', str(e))
     finally:
         bot_state["is_running"] = False
         bot_state["status"] = "🔴 Desligado"

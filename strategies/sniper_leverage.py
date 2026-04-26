@@ -1,120 +1,307 @@
 import time
 import sys
 import os
+import csv
+from datetime import datetime
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.market_data import fetch_historical_data, calculate_rsi
 from core.shared_state import bot_state, add_log
-from core.balance_utils import get_unified_balance
+from core.balance_utils import get_unified_balance, get_available_margin_usd, enable_btc_collateral, place_maker_entry
+
+# --- SISTEMA DE LOG EM CSV ---
+LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'logs')
+LOG_FILE = os.path.join(LOG_DIR, 'sniper_trades.csv')
+
+def init_trade_log():
+    """Cria o diretório e o arquivo CSV de log se não existirem."""
+    os.makedirs(LOG_DIR, exist_ok=True)
+    if not os.path.exists(LOG_FILE):
+        with open(LOG_FILE, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                'Data/Hora', 'Moeda', 'Tipo', 'Direção', 'Preço',
+                'RSI', 'Quantidade', 'Alavancagem', 'TP Alvo',
+                'Saldo USDT', 'Status', 'Detalhes'
+            ])
+
+def log_trade(symbol, tipo, direcao, preco, rsi, quantidade, leverage, tp_alvo, saldo, status, detalhes=''):
+    """Grava uma linha no CSV de log de trades."""
+    try:
+        with open(LOG_FILE, 'a', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                symbol, tipo, direcao, f'{preco:.2f}',
+                f'{rsi:.1f}', f'{quantidade:.8f}', f'{leverage}x',
+                f'{tp_alvo:.2f}' if tp_alvo else '-',
+                f'{saldo:.2f}', status, detalhes
+            ])
+    except Exception as e:
+        add_log(f"Aviso: Não foi possível gravar log CSV: {e}")
+
+# --- FUNÇÕES PRINCIPAIS ---
 
 def set_margin_leverage(exchange, symbol, leverage):
     try:
-        # Tenta setar a alavancagem
         exchange.set_leverage(leverage, symbol)
         add_log(f"Alavancagem setada para {leverage}x em {symbol}!")
         return True
     except Exception as e:
-        # Se já estiver setado, a Bybit costuma retornar um erro que pode ser ignorado
-        add_log(f"Aviso ao definir alavancagem: Pode já estar definida ou a API não tem permissão de Contratos.")
         return False
 
+def get_collateral_usd(exchange):
+    """Usa a margem real disponível (totalAvailableBalance) da Bybit UTA."""
+    available, total_equity = get_available_margin_usd(exchange)
+    
+    if available > 0.01:
+        # Detecta qual moeda é o colateral principal
+        btc_bal = get_unified_balance(exchange, 'BTC')
+        if btc_bal > 0.0:
+            return available, 'BTC', btc_bal
+        return available, 'USDT', available
+    
+    return 0.0, 'NONE', 0.0
+
 def run_sniper_leverage(exchange, symbol='BTC/USDT:USDT', leverage=100, check_interval=60):
-    add_log(f"🎯 [SNIPER ALAVANCADO] Iniciando Mercado Futuro ({symbol}) com {leverage}x!")
+    is_multi = (symbol == "MULTI")
+    symbols_to_scan = ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT"] if is_multi else [symbol]
+    
+    # Inicializa o log CSV
+    init_trade_log()
+    
+    add_log(f"🎯 [SNIPER ALAVANCADO] Iniciando {'MULTI-SCAN (BTC, ETH, SOL)' if is_multi else symbol} com {leverage}x!")
+    add_log(f"📋 Log de trades será gravado em: logs/sniper_trades.csv")
     bot_state["is_running"] = True
     bot_state["status"] = f"🎯 Sniper Ativo ({leverage}x)"
     
-    # Extrai a base coin
-    base_coin = symbol.split('/')[0]
-    bot_state["coin_name"] = base_coin
+    bot_state["coin_name"] = "SCANNING" if is_multi else symbol.split('/')[0]
+    bot_state["coin_balance"] = 0.0
+
+    # Habilita BTC como colateral para Derivativos (resolve erro 110007)
+    if enable_btc_collateral(exchange):
+        add_log("🔓 BTC habilitado como colateral para Futuros!")
     
-    # Atualiza saldo na tela inicial
-    bot_state["coin_balance"] = 0.0 # Em futuros operamos apenas com saldo colateral de USDT
-    usdt_balance = get_unified_balance(exchange, 'USDT')
-    bot_state["usdt_balance"] = usdt_balance
+    # Detecta colateral: BTC ou USDT (agora usando margem REAL disponível)
+    collateral_usd, collateral_coin, collateral_raw = get_collateral_usd(exchange)
+    bot_state["usdt_balance"] = collateral_usd
     
-    add_log(f"Saldo Detectado (Derivativos): ${usdt_balance:.2f} USDT")
+    if collateral_coin == 'BTC':
+        add_log(f"💰 Colateral: {collateral_raw:.8f} BTC | Margem disponível: ${collateral_usd:.2f} USD")
+        bot_state["coin_balance"] = collateral_raw
+    else:
+        add_log(f"💰 Margem disponível: ${collateral_usd:.2f} USDT")
     
-    # Configura a alavancagem na Bybit
-    set_margin_leverage(exchange, symbol, leverage)
-    
+    for sym in symbols_to_scan:
+        set_margin_leverage(exchange, sym, leverage)
+        
     in_position = False
+    active_symbol = None
+    entry_price = 0.0
+    entry_side = None
+    scan_count = 0
+    
+    # Filtro de confirmação RSI
+    rsi_history = {}
+    
+    # Meta diária: 23%
+    starting_balance = collateral_usd
+    daily_target_pct = 0.23
+    daily_target_usd = starting_balance * (1 + daily_target_pct)
+    add_log(f"🎯 Meta diária: ${daily_target_usd:.2f} (+{daily_target_pct*100:.0f}% sobre ${starting_balance:.2f})")
     
     try:
         while bot_state["is_running"]:
-            closes = fetch_historical_data(exchange, symbol, timeframe='1m', limit=50)
+            scan_count += 1
             
-            if not closes or len(closes) < 15:
-                add_log("Aguardando dados da Bybit Futuros...")
-                time.sleep(check_interval)
-                continue
+            # Atualiza colateral (BTC ou USDT)
+            collateral_usd, collateral_coin, collateral_raw = get_collateral_usd(exchange)
+            bot_state["usdt_balance"] = collateral_usd
+            if collateral_coin == 'BTC':
+                bot_state["coin_balance"] = collateral_raw
+            
+            # Meta diária (exige lucro mínimo de $0.50)
+            if not in_position and collateral_usd >= daily_target_usd:
+                lucro = collateral_usd - starting_balance
+                if lucro >= 0.50:
+                    add_log(f"{'='*50}")
+                    add_log(f"🏆🏆🏆 META DIÁRIA BATIDA! 🏆🏆🏆")
+                    add_log(f"Início: ${starting_balance:.2f} → Final: ${collateral_usd:.2f}")
+                    add_log(f"Lucro: +${lucro:.2f} (+{(lucro/starting_balance)*100:.1f}%)")
+                    add_log(f"{'='*50}")
+                    log_trade('-', 'META_DIARIA', '-', 0, 0, 0, leverage, 0, collateral_usd, '🏆 META BATIDA', f"Lucro: +${lucro:.2f}")
+                    bot_state["status"] = "🏆 Meta Diária Atingida!"
+                    bot_state["is_running"] = False
+                    break
+            
+            # ============================================================
+            # MODO SCANNER: Procurando oportunidade em todas as moedas
+            # ============================================================
+            if not in_position and collateral_usd >= 0.50:
+                add_log(f"── Scanner #{scan_count} | ${collateral_usd:.2f} ({collateral_coin}) ──")
                 
-            current_price = closes[-1]
-            rsi = calculate_rsi(closes, period=14)
-            
-            if rsi is None:
-                time.sleep(check_interval)
-                continue
+                found_entry = False
+                for sym in symbols_to_scan:
+                    if not bot_state["is_running"] or found_entry: break
+                    
+                    coin_name = sym.split('/')[0]
+                    bot_state["coin_name"] = coin_name
+                    closes = fetch_historical_data(exchange, sym, timeframe='1m', limit=50)
+                    
+                    if not closes or len(closes) < 15:
+                        continue
+                        
+                    current_price = closes[-1]
+                    rsi = calculate_rsi(closes, period=14)
+                    if rsi is None:
+                        continue
+                        
+                    bot_state["current_price"] = current_price
+                    bot_state["rsi"] = rsi
+                    
+                    rsi_status = "Neutro"
+                    if rsi >= 70: rsi_status = "SOBRECOMPRADO 🔴"
+                    elif rsi <= 30: rsi_status = "SOBREVENDIDO 🟢"
+                    bot_state["rsi_status"] = rsi_status
+                    
+                    rsi_bar = "█" * int(rsi / 5) + "░" * (20 - int(rsi / 5))
+                    add_log(f"  {coin_name}: ${current_price:,.2f} | RSI [{rsi_bar}] {rsi:.1f} {rsi_status}")
+                    log_trade(sym, 'SCAN', '-', current_price, rsi, 0, leverage, 0, collateral_usd, rsi_status)
+                    
+                    # Filtro de confirmação RSI
+                    prev_rsi = rsi_history.get(sym, rsi)
+                    rsi_history[sym] = rsi
+                        
+                    # ── GATILHO LONG (RSI <= 30 E subindo) ──
+                    if rsi <= 30 and rsi > prev_rsi: 
+                        add_log(f"🎯 SNIPER LONG CONFIRMADO em {coin_name}! RSI: {prev_rsi:.1f}→{rsi:.1f}")
+                        trade_size = collateral_usd * 0.95
+                        amount_to_buy = (trade_size * leverage) / current_price
+                        tp_price = round(current_price * 1.01, 2)
+                        sl_price = round(current_price * 0.995, 2)
+                        entry_limit_price = round(current_price, 2)
+                        
+                        try:
+                            add_log(f"📤 Limit PostOnly BUY @ ${entry_limit_price:,.2f} (maker 0.02%)...")
+                            order, filled = place_maker_entry(
+                                exchange, sym, 'buy', amount_to_buy,
+                                entry_limit_price, tp_price, sl_price, max_wait=15
+                            )
+                            if filled:
+                                in_position = True
+                                active_symbol = sym
+                                entry_price = current_price
+                                entry_side = 'LONG'
+                                found_entry = True
+                                add_log(f"✅ LONG (maker)! TP: ${tp_price:,.2f} | SL: ${sl_price:,.2f}")
+                                log_trade(sym, 'ENTRADA', 'LONG', current_price, rsi, amount_to_buy, leverage, tp_price, collateral_usd, '✅ SUCESSO (maker)', f"OrderID: {order.get('id', 'N/A')}")
+                            else:
+                                add_log(f"⏳ Não preenchida em 15s. Cancelada.")
+                        except Exception as e:
+                            add_log(f"❌ Erro ({coin_name}): {e}")
+                            add_log(f"⏸️ Pausando {check_interval}s...")
+                            break
+                            
+                    elif rsi >= 70 and rsi < prev_rsi:
+                        add_log(f"🎯 SNIPER SHORT CONFIRMADO em {coin_name}! RSI: {prev_rsi:.1f}→{rsi:.1f}")
+                        trade_size = collateral_usd * 0.95
+                        amount_to_sell = (trade_size * leverage) / current_price
+                        tp_price = round(current_price * 0.99, 2)
+                        sl_price = round(current_price * 1.005, 2)
+                        entry_limit_price = round(current_price, 2)
+                        
+                        try:
+                            add_log(f"📤 Limit PostOnly SELL @ ${entry_limit_price:,.2f} (maker 0.02%)...")
+                            order, filled = place_maker_entry(
+                                exchange, sym, 'sell', amount_to_sell,
+                                entry_limit_price, tp_price, sl_price, max_wait=15
+                            )
+                            if filled:
+                                in_position = True
+                                active_symbol = sym
+                                entry_price = current_price
+                                entry_side = 'SHORT'
+                                found_entry = True
+                                add_log(f"✅ SHORT (maker)! TP: ${tp_price:,.2f} | SL: ${sl_price:,.2f}")
+                                log_trade(sym, 'ENTRADA', 'SHORT', current_price, rsi, amount_to_sell, leverage, tp_price, collateral_usd, '✅ SUCESSO (maker)', f"OrderID: {order.get('id', 'N/A')}")
+                            else:
+                                add_log(f"⏳ Não preenchida em 15s. Cancelada.")
+                        except Exception as e:
+                            add_log(f"❌ Erro ({coin_name}): {e}")
+                            add_log(f"⏸️ Pausando {check_interval}s...")
+                            break
+                    
+                    elif rsi <= 30:
+                        add_log(f"  ⏳ {coin_name}: RSI caindo ({prev_rsi:.1f}→{rsi:.1f}), aguardando reversão...")
+                    elif rsi >= 70:
+                        add_log(f"  ⏳ {coin_name}: RSI subindo ({prev_rsi:.1f}→{rsi:.1f}), aguardando reversão...")
+                    
+                    time.sleep(0.5)
+                    
+            # ============================================================
+            # MODO POSIÇÃO ABERTA: Monitorando trade ativo
+            # ============================================================
+            elif in_position and active_symbol:
+                coin_name = active_symbol.split('/')[0]
+                bot_state["coin_name"] = coin_name
+                closes = fetch_historical_data(exchange, active_symbol, timeframe='1m', limit=15)
                 
-            bot_state["current_price"] = current_price
-            bot_state["rsi"] = rsi
-            
-            rsi_status = "Neutro"
-            if rsi >= 80:
-                rsi_status = "SOBRECOMPRADO EXTREMO 🔴"
-            elif rsi <= 20:
-                rsi_status = "SOBREVENDIDO EXTREMO 🟢"
-            bot_state["rsi_status"] = rsi_status
+                if closes:
+                    current_price = closes[-1]
+                    bot_state["current_price"] = current_price
+                    
+                    if entry_side == 'LONG':
+                        pnl_pct = ((current_price - entry_price) / entry_price) * 100 * leverage
+                    else:
+                        pnl_pct = ((entry_price - current_price) / entry_price) * 100 * leverage
+                    
+                    pnl_emoji = "🟢" if pnl_pct >= 0 else "🔴"
+                    add_log(f"📊 {coin_name} {entry_side} | ${entry_price:,.2f} → ${current_price:,.2f} | P&L: {pnl_emoji} {pnl_pct:+.1f}%")
                 
-            add_log(f"Futuros: ${current_price:.2f} | RSI: {rsi:.1f} ({rsi_status})")
-            
-            usdt_balance = get_unified_balance(exchange, 'USDT')
-            bot_state["usdt_balance"] = usdt_balance
-            
-            if not in_position and usdt_balance >= 2.0: # Saldo mínimo seguro para tentar ordem alavancada
-                # Regra Sniper Extrema
-                if rsi <= 20: 
-                    add_log("🎯 GATILHO SNIPER: Fundo extremo! LONG (Comprar) All-in 100x!")
-                    try:
-                        amount_to_buy = (usdt_balance * leverage * 0.95) / current_price 
-                        order = exchange.create_market_buy_order(symbol, amount_to_buy)
-                        add_log(f"✅ ORDEM LONG EXECUTADA!")
-                        in_position = True
+                try:
+                    positions = exchange.fetch_positions([active_symbol])
+                    has_position = False
+                    for pos in positions:
+                        contracts = float(pos.get('contracts', 0))
+                        if contracts > 0:
+                            has_position = True
+                            unrealized_pnl = float(pos.get('unrealizedPnl', 0))
+                            add_log(f"  💰 Contratos: {contracts} | PnL: ${unrealized_pnl:.4f}")
+                            break
+                    
+                    if not has_position:
+                        new_collateral_usd, _, _ = get_collateral_usd(exchange)
+                        resultado = new_collateral_usd - collateral_usd
+                        resultado_emoji = "🏆 LUCRO" if resultado >= 0 else "💀 LOSS"
                         
-                        # Take Profit para dobrar o capital
-                        tp_price = current_price * 1.01 # 1% acima * 100x = 100% lucro
-                        exchange.create_order(symbol, 'limit', 'sell', amount_to_buy, tp_price, params={'reduceOnly': True})
-                        add_log(f"✅ Take Profit cravado em ${tp_price:.2f}")
+                        add_log(f"{'='*50}")
+                        add_log(f"{resultado_emoji}: {entry_side} em {coin_name} | ${resultado:+.4f}")
+                        add_log(f"${collateral_usd:.2f} → ${new_collateral_usd:.2f}")
+                        add_log(f"{'='*50}")
                         
-                    except Exception as e:
-                        add_log(f"❌ Erro Sniper LONG: {e}")
+                        log_trade(active_symbol, 'SAÍDA', entry_side, current_price if closes else 0, 0, 0, leverage, 0, new_collateral_usd, resultado_emoji, f"${resultado:+.4f}")
                         
-                elif rsi >= 80:
-                    add_log("🎯 GATILHO SNIPER: Topo extremo! SHORT (Vender) All-in 100x!")
-                    try:
-                        amount_to_sell = (usdt_balance * leverage * 0.95) / current_price
-                        order = exchange.create_market_sell_order(symbol, amount_to_sell)
-                        add_log(f"✅ ORDEM SHORT EXECUTADA!")
-                        in_position = True
+                        in_position = False
+                        active_symbol = None
+                        entry_price = 0.0
+                        entry_side = None
+                        add_log("🔄 Voltando ao Scanner...")
                         
-                        # Take Profit para dobrar o capital
-                        tp_price = current_price * 0.99 # 1% abaixo * 100x = 100% lucro
-                        exchange.create_order(symbol, 'limit', 'buy', amount_to_sell, tp_price, params={'reduceOnly': True})
-                        add_log(f"✅ Take Profit cravado em ${tp_price:.2f}")
-                        
-                    except Exception as e:
-                        add_log(f"❌ Erro Sniper SHORT: {e}")
-            
-            elif in_position:
-                add_log("Aguardando Take Profit ou Liquidação (Operação Rolando).")
+                except Exception as e:
+                    add_log(f"⚠️ Aviso posição: {e}")
+                
+            elif not in_position and collateral_usd < 0.50:
+                add_log(f"⚠️ Saldo insuficiente: ${collateral_usd:.2f}")
                 
             for _ in range(check_interval):
-                if not bot_state["is_running"]:
-                    break
+                if not bot_state["is_running"]: break
                 time.sleep(1)
                 
     except Exception as e:
         add_log(f"Erro Crítico Sniper: {e}")
+        log_trade('-', 'ERRO_CRITICO', '-', 0, 0, 0, leverage, 0, 0, '💥 CRASH', str(e))
     finally:
         bot_state["is_running"] = False
         bot_state["status"] = "🔴 Desligado"
         add_log("Bot Sniper Finalizado.")
+

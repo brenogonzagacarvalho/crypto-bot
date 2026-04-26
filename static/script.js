@@ -116,8 +116,21 @@ function updateUI(data) {
 
 async function startBot(strategyType = 'spot') {
     const selectedCoin = document.getElementById('coin-selector').value;
+    
+    if (selectedCoin === "MULTI" && strategyType !== "scalping_10x" && strategyType !== "reverse_martingale" && strategyType !== "sniper") {
+        alert("O modo Scanner MULTI (BTC, ETH, SOL) está disponível apenas nas novas estratégias: Scalping 10x, Reverse Martingale e Alavancagem Sniper.");
+        return;
+    }
+    
     const isDerivatives = strategyType === 'sniper' || strategyType === 'martingale' || strategyType === 'trend' || strategyType === 'reverse_martingale' || strategyType === 'scalping_10x';
-    const symbol = isDerivatives ? `${selectedCoin}/USDT:USDT` : `${selectedCoin}/USDT`;
+    
+    let symbol = "";
+    if (selectedCoin === "MULTI") {
+        symbol = "MULTI";
+    } else {
+        symbol = isDerivatives ? `${selectedCoin}/USDT:USDT` : `${selectedCoin}/USDT`;
+    }
+    
     
     try {
         await fetch('/api/start', { 
@@ -143,5 +156,73 @@ async function stopBot() {
 }
 
 // Atualiza a cada 1 segundo
-fetchInterval = setInterval(fetchStatus, 1000);
+fetchInterval = setInterval(() => {
+    fetchStatus();
+    fetchPositions();
+}, 1000);
 fetchStatus(); // Busca inicial
+fetchPositions();
+
+// --- NOVAS FUNÇÕES PARA ABAS E POSIÇÕES ---
+
+function switchTab(tabId) {
+    // Esconde todos os conteúdos
+    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+    // Desativa todos os botões
+    document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+
+    // Mostra o selecionado
+    document.getElementById('tab-' + tabId).classList.add('active');
+    document.getElementById('tab-btn-' + tabId).classList.add('active');
+}
+
+async function fetchPositions() {
+    try {
+        const response = await fetch('/api/positions');
+        const data = await response.json();
+        
+        const body = document.getElementById('positions-body');
+        const posCount = document.getElementById('pos-count');
+        
+        if (data.positions) {
+            posCount.textContent = data.positions.length;
+            body.innerHTML = '';
+            
+            if (data.positions.length === 0) {
+                body.innerHTML = '<tr><td colspan="6" style="text-align:center;">Nenhuma posição aberta.</td></tr>';
+            } else {
+                data.positions.forEach(pos => {
+                    const tr = document.createElement('tr');
+                    const sideClass = pos.side.toLowerCase() === 'long' ? 'side-long' : 'side-short';
+                    const pnl = parseFloat(pos.unrealizedPnl);
+                    const pnlClass = pnl >= 0 ? 'pnl-positive' : 'pnl-negative';
+                    
+                    tr.innerHTML = `
+                        <td><strong>${pos.symbol}</strong></td>
+                        <td class="${sideClass}">${pos.side}</td>
+                        <td>${pos.leverage}x</td>
+                        <td>${pos.contracts}</td>
+                        <td>$${parseFloat(pos.entryPrice).toFixed(2)}</td>
+                        <td class="${pnlClass}">${pnl >= 0 ? '+' : ''}${pnl.toFixed(4)} USDT</td>
+                    `;
+                    body.appendChild(tr);
+                });
+            }
+        }
+    } catch (error) {
+        console.error("Erro ao buscar posições:", error);
+    }
+}
+
+async function manualCloseAll() {
+    if (!confirm("Tem certeza que deseja fechar TODAS as posições abertas agora?")) return;
+    
+    try {
+        const response = await fetch('/api/close_all', { method: 'POST' });
+        const data = await response.json();
+        alert(data.message);
+        fetchPositions();
+    } catch (error) {
+        alert("Erro ao fechar posições.");
+    }
+}

@@ -25,9 +25,15 @@ def get_exchange():
         'enableRateLimit': True, 
         'options': {
             'adjustForTimeDifference': True, # Previne erro 10002 de timestamp
+            'defaultType': 'spot', # Define spot como padrão
         }
     })
     
+    try:
+        exchange.load_markets()
+    except Exception as e:
+        print(f"Aviso ao carregar mercados: {e}")
+        
     return exchange
 
 def check_connection(exchange):

@@ -27,3 +27,103 @@ def get_unified_balance(exchange, coin='USDT'):
 
     return 0.0
 
+
+def get_available_margin_usd(exchange):
+    """
+    Retorna o saldo REAL disponível para abrir posições de Futuros (Derivativos)
+    na conta UTA da Bybit. Usa o campo 'totalAvailableBalance' que já considera
+    haircuts e margens travadas.
+    """
+    try:
+        resp = exchange.privateGetV5AccountWalletBalance({'accountType': 'UNIFIED'})
+        account = resp.get('result', {}).get('list', [{}])[0]
+        
+        # totalAvailableBalance = margem real livre para novas ordens
+        available = float(account.get('totalAvailableBalance', 0))
+        total_equity = float(account.get('totalEquity', 0))
+        
+        return available, total_equity
+    except:
+        return 0.0, 0.0
+
+
+def enable_btc_collateral(exchange):
+    """
+    Habilita BTC como moeda de colateral para Derivativos na Bybit UTA.
+    Sem isso, o BTC na carteira NÃO pode ser usado como margem para Futuros.
+    """
+    try:
+        exchange.privatePostV5AccountSetCollateralSwitch({
+            'coin': 'BTC',
+            'collateralSwitch': 'ON'
+        })
+        return True
+    except Exception as e:
+        # Se já estiver habilitado, ignora o erro
+        return False
+
+
+def place_maker_entry(exchange, symbol, side, amount, price, tp_price, sl_price, max_wait=15):
+    """
+    Coloca uma ordem Limit PostOnly (taxa maker 0.02%) com TP e SL embutidos.
+    
+    - PostOnly garante que a ordem vai para o livro como maker
+    - Se não preencher em max_wait segundos, cancela
+    - Retorna (order, filled) - order é o dict, filled é True/False
+    
+    Args:
+        side: 'buy' ou 'sell'
+        price: preço limite (usar preço de mercado atual)
+        tp_price: take profit
+        sl_price: stop loss
+        max_wait: tempo máximo de espera em segundos
+    """
+    import time
+    
+    params = {
+        'timeInForce': 'PostOnly',
+        'takeProfit': str(tp_price),
+        'stopLoss': str(sl_price),
+    }
+    
+    try:
+        order = exchange.create_order(
+            symbol=symbol,
+            type='limit',
+            side=side,
+            amount=amount,
+            price=price,
+            params=params
+        )
+        
+        order_id = order.get('id')
+        if not order_id:
+            return order, False
+        
+        # Aguarda preenchimento
+        for i in range(max_wait):
+            time.sleep(1)
+            try:
+                status = exchange.fetch_order(order_id, symbol)
+                order_status = status.get('status', '')
+                
+                if order_status == 'closed':
+                    return status, True  # Preenchida!
+                elif order_status == 'canceled' or order_status == 'cancelled':
+                    return status, False  # PostOnly rejeitada (seria taker)
+                elif order_status == 'rejected':
+                    return status, False
+            except:
+                continue
+        
+        # Timeout: cancela a ordem
+        try:
+            exchange.cancel_order(order_id, symbol)
+        except:
+            pass
+        
+        return order, False
+        
+    except Exception as e:
+        raise e
+
