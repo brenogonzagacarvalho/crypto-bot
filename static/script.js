@@ -117,12 +117,12 @@ function updateUI(data) {
 async function startBot(strategyType = 'spot') {
     const selectedCoin = document.getElementById('coin-selector').value;
     
-    if (selectedCoin === "MULTI" && strategyType !== "scalping_10x" && strategyType !== "reverse_martingale" && strategyType !== "sniper") {
-        alert("O modo Scanner MULTI (BTC, ETH, SOL) está disponível apenas nas novas estratégias: Scalping 10x, Reverse Martingale e Alavancagem Sniper.");
+    if (selectedCoin === "MULTI" && strategyType !== "scalping_10x" && strategyType !== "reverse_martingale" && strategyType !== "sniper" && strategyType !== "survival") {
+        alert("O modo Scanner MULTI está disponível apenas nas estratégias: Survival Scalper, Scalping 10x, Reverse Martingale e Alavancagem Sniper.");
         return;
     }
     
-    const isDerivatives = strategyType === 'sniper' || strategyType === 'martingale' || strategyType === 'trend' || strategyType === 'reverse_martingale' || strategyType === 'scalping_10x' || strategyType === 'survival';
+    const isDerivatives = strategyType === 'sniper' || strategyType === 'martingale' || strategyType === 'trend' || strategyType === 'reverse_martingale' || strategyType === 'scalping_10x' || strategyType === 'survival' || strategyType === 'longshort_lev';
     
     let symbol = "";
     if (selectedCoin === "MULTI") {
@@ -155,11 +155,15 @@ async function stopBot() {
     }
 }
 
-// Atualiza a cada 1 segundo
+// Atualiza status do bot a cada 1 segundo (não consome API pesada)
 fetchInterval = setInterval(() => {
     fetchStatus();
-    fetchPositions();
 }, 1000);
+
+// Atualiza a tabela de posições a cada 5 segundos (evita rate limit da Bybit)
+setInterval(() => {
+    fetchPositions();
+}, 5000);
 fetchStatus(); // Busca inicial
 fetchPositions();
 

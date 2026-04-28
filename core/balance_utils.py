@@ -5,7 +5,13 @@ def get_unified_balance(exchange, coin='USDT'):
     # Tentativa 1: API V5 direta - mais confiável para UTA
     try:
         resp = exchange.privateGetV5AccountWalletBalance({'accountType': 'UNIFIED'})
-        coins = resp.get('result', {}).get('list', [{}])[0].get('coin', [])
+        account_data = resp.get('result', {}).get('list', [{}])[0]
+        
+        # Se for USDT, a equidade total é a representação mais real do saldo na Bybit UTA
+        if coin == 'USDT' and account_data.get('totalEquity'):
+            return float(account_data.get('totalEquity'))
+            
+        coins = account_data.get('coin', [])
         for c in coins:
             if c.get('coin') == coin:
                 # availableToWithdraw é o saldo livre para operar
@@ -38,13 +44,18 @@ def get_available_margin_usd(exchange):
         resp = exchange.privateGetV5AccountWalletBalance({'accountType': 'UNIFIED'})
         account = resp.get('result', {}).get('list', [{}])[0]
         
-        # totalAvailableBalance = margem real livre para novas ordens
-        available = float(account.get('totalAvailableBalance', 0))
         total_equity = float(account.get('totalEquity', 0))
         
+        # Tenta pegar o available. Se a Bybit reportar 0 (comum para BTC não-colateralizado explicitamente), usamos a equidade
+        available = float(account.get('totalAvailableBalance') or 0)
+        if available <= 0.01 and total_equity > 0:
+            available = total_equity
+            
         return available, total_equity
-    except:
-        return 0.0, 0.0
+    except Exception as e:
+        from core.shared_state import add_log
+        add_log(f"Falha de conexão com a API de saldo: {e}")
+        return None, None
 
 
 def enable_btc_collateral(exchange):

@@ -166,8 +166,8 @@ def run_live_predictor(exchange, symbol='BTC/USDT', check_interval=60):
     if usdt_balance < 0.01 and coin_balance > 0:
         try:
             ticker = exchange.fetch_ticker(symbol)
-            usdt_balance = coin_balance * ticker['last']
-            add_log(f"💰 {coin_balance:.8f} {base_coin} (≈ ${usdt_balance:.2f})")
+            btc_value = coin_balance * ticker['last']
+            add_log(f"💰 {coin_balance:.8f} {base_coin} (≈ ${btc_value:.2f})")
         except:
             add_log(f"💰 {coin_balance:.8f} {base_coin}")
     else:
@@ -177,7 +177,11 @@ def run_live_predictor(exchange, symbol='BTC/USDT', check_interval=60):
     bot_state["usdt_balance"] = usdt_balance
 
     # Meta diária 23%
-    starting_usd = usdt_balance if usdt_balance > 0.01 else (coin_balance * 77000)  # estimativa
+    try:
+        current_p = exchange.fetch_ticker(symbol)['last']
+    except:
+        current_p = 77000
+    starting_usd = usdt_balance if usdt_balance > 0.01 else (coin_balance * current_p)
     daily_target = starting_usd * 1.23
     add_log(f"🎯 Meta: ${daily_target:.2f} (+23% sobre ${starting_usd:.2f})")
 
@@ -194,13 +198,7 @@ def run_live_predictor(exchange, symbol='BTC/USDT', check_interval=60):
             coin_balance = get_free_balance(exchange, base_coin)
             usdt_balance = get_free_balance(exchange, 'USDT')
 
-            if usdt_balance < 0.01 and coin_balance > 0:
-                try:
-                    ticker = exchange.fetch_ticker(symbol)
-                    usdt_balance = coin_balance * ticker['last']
-                except:
-                    pass
-
+            # Aqui o usdt_balance real é mantido, não substituído pelo valor do BTC
             bot_state["coin_balance"] = coin_balance
             bot_state["usdt_balance"] = usdt_balance
 

@@ -13,6 +13,11 @@ from strategies.reverse_martingale_pro import run_reverse_martingale_pro
 from strategies.scalping_10x import run_scalping_10x
 from strategies.survival_scalper import run_survival_scalper
 import time
+import logging
+
+# Desativa os logs de GET 200 OK do Flask/Werkzeug
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
 
 app = Flask(__name__)
 
@@ -26,16 +31,17 @@ def init_exchange():
     if check_connection(exchange):
         # Lê o saldo real logo que o servidor inicia
         try:
-            # Usa V5 direto para pegar todos os saldos da UTA
+            # Usa V5 direto para pegar a Equidade Total (saldo real completo em USD)
             resp = exchange.privateGetV5AccountWalletBalance({'accountType': 'UNIFIED'})
-            coins = resp.get('result', {}).get('list', [{}])[0].get('coin', [])
+            account_data = resp.get('result', {}).get('list', [{}])[0]
+            bot_state["usdt_balance"] = float(account_data.get('totalEquity', 0))
+            
+            coins = account_data.get('coin', [])
             for c in coins:
-                if c.get('coin') == 'USDT':
-                    bot_state["usdt_balance"] = float(c.get('walletBalance') or 0)
                 if c.get('coin') == 'BTC':
                     bot_state["coin_balance"] = float(c.get('walletBalance') or 0)
                     bot_state["coin_name"] = "BTC"
-            print(f"[OK] Saldo carregado: BTC={bot_state['coin_balance']:.8f} | USDT={bot_state['usdt_balance']:.4f}")
+            print(f"[OK] Saldo carregado: Total Equidade USD = ${bot_state['usdt_balance']:.2f}")
         except Exception as e:
             print(f"[AVISO] Não foi possível carregar saldo inicial: {e}")
 
@@ -55,17 +61,22 @@ def refresh_balance():
         exchange = get_exchange()
     try:
         resp = exchange.privateGetV5AccountWalletBalance({'accountType': 'UNIFIED'})
-        coins = resp.get('result', {}).get('list', [{}])[0].get('coin', [])
-        result = {}
+        account_data = resp.get('result', {}).get('list', [{}])[0]
+        
+        total_equity = float(account_data.get('totalEquity', 0))
+        bot_state["usdt_balance"] = total_equity
+        
+        coins = account_data.get('coin', [])
+        result = {'USDT': total_equity} # Envia a equidade como USDT para a interface
+        
         for c in coins:
-            if float(c.get('walletBalance') or 0) > 0:
-                result[c['coin']] = float(c.get('walletBalance') or 0)
-                # Atualiza o shared_state também
-                if c['coin'] == 'USDT':
-                    bot_state["usdt_balance"] = result[c['coin']]
+            val = float(c.get('walletBalance') or 0)
+            if val > 0:
+                result[c['coin']] = val
                 if c['coin'] == 'BTC':
-                    bot_state["coin_balance"] = result[c['coin']]
+                    bot_state["coin_balance"] = val
                     bot_state["coin_name"] = "BTC"
+                    
         return jsonify({"balances": result, "status": "ok"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -162,6 +173,14 @@ def start_bot():
     elif strategy == 'survival':
         add_log(f"Comando de INICIAR SURVIVAL SCALPER recebido para {symbol}...")
         thread = threading.Thread(target=run_survival_scalper, args=(exchange, symbol))
+    elif strategy == 'longshort':
+        from strategies.hybrid_long_short import run_hybrid_long_short
+        add_log(f"Comando de INICIAR LONG/SHORT HÍBRIDO recebido para {symbol}...")
+        thread = threading.Thread(target=run_hybrid_long_short, args=(exchange, symbol))
+    elif strategy == 'longshort_lev':
+        from strategies.hybrid_long_short_leverage import run_leveraged_long_short
+        add_log(f"Comando de INICIAR LONG/SHORT ALAVANCADO recebido para {symbol}...")
+        thread = threading.Thread(target=run_leveraged_long_short, args=(exchange, symbol))
     else:
         add_log(f"Comando de INICIAR SPOT recebido para {symbol}...")
         thread = threading.Thread(target=run_live_predictor, args=(exchange, symbol))

@@ -12,6 +12,7 @@ from core.balance_utils import get_unified_balance, get_available_margin_usd, en
 
 LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'logs')
 LOG_FILE = os.path.join(LOG_DIR, 'survival_trades.csv')
+MARKET_LOG_FILE = os.path.join(LOG_DIR, 'survival_market_data.csv')
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config', 'risk_params.json')
 
 def load_config():
@@ -37,6 +38,13 @@ def init_trade_log():
                 'Saldo USD', 'Status', 'Detalhes'
             ])
 
+def init_market_log():
+    os.makedirs(LOG_DIR, exist_ok=True)
+    if not os.path.exists(MARKET_LOG_FILE):
+        with open(MARKET_LOG_FILE, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(['Data/Hora', 'Moeda', 'Preço', 'RSI', 'EMA200', 'MACD', 'Tendência'])
+
 def log_trade(symbol, tipo, direcao, preco, rsi, valor, leverage, tp, sl, saldo, status, detalhes=''):
     try:
         with open(LOG_FILE, 'a', newline='', encoding='utf-8') as f:
@@ -53,8 +61,22 @@ def log_trade(symbol, tipo, direcao, preco, rsi, valor, leverage, tp, sl, saldo,
     except Exception as e:
         add_log(f"Aviso log CSV: {e}")
 
+def log_market_data(symbol, price, rsi, ema200, macd, trend):
+    try:
+        with open(MARKET_LOG_FILE, 'a', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                symbol, f'{price:.6f}', f'{rsi:.2f}', f'{ema200:.6f}', f'{macd:.6f}', trend
+            ])
+    except Exception:
+        pass
+
 def get_collateral_usd(exchange):
     available, _ = get_available_margin_usd(exchange)
+    if available is None:
+        return None, 'ERROR', None
+        
     if available > 0.01:
         btc_bal = get_unified_balance(exchange, 'BTC')
         if btc_bal > 0.0: return available, 'BTC', btc_bal
@@ -63,9 +85,12 @@ def get_collateral_usd(exchange):
 
 def run_survival_scalper(exchange, symbol='MULTI'):
     is_multi = (symbol == "MULTI")
-    symbols_to_scan = ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT"] if is_multi else [symbol]
+    # Expansão para 7 moedas principais
+    symbols_to_scan = ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT", "XRP/USDT:USDT", "ADA/USDT:USDT", "DOGE/USDT:USDT", "BNB/USDT:USDT"] if is_multi else [symbol]
     
     init_trade_log()
+    init_market_log()
+    
     config = load_config()
     leverage = config['max_leverage']
     
@@ -76,6 +101,13 @@ def run_survival_scalper(exchange, symbol='MULTI'):
     enable_btc_collateral(exchange)
     
     collateral_usd, collateral_coin, _ = get_collateral_usd(exchange)
+    
+    if collateral_usd is None:
+        add_log("❌ Falha crítica ao ler o saldo inicial. Verifique sua chave de API (restrição de IP).")
+        bot_state["is_running"] = False
+        bot_state["status"] = "🔴 Erro API"
+        return
+        
     bot_state["usdt_balance"] = collateral_usd
     starting_balance = collateral_usd
     
@@ -104,7 +136,13 @@ def run_survival_scalper(exchange, symbol='MULTI'):
     try:
         while bot_state["is_running"]:
             scan_count += 1
-            collateral_usd, collateral_coin, _ = get_collateral_usd(exchange)
+            res = get_collateral_usd(exchange)
+            if res[0] is None:
+                add_log("⚠️ Falha temporária ao ler saldo (timeout/rede). Tentando novamente em 10s...")
+                time.sleep(10)
+                continue
+                
+            collateral_usd, collateral_coin, _ = res
             bot_state["usdt_balance"] = collateral_usd
             
             # PROTEÇÃO: Stop Diário
@@ -162,11 +200,17 @@ def run_survival_scalper(exchange, symbol='MULTI'):
                     trend = "ALTA 📈" if current_price > ema200 else "BAIXA 📉"
                     add_log(f"  {coin_name}: ${current_price:,.2f} | RSI: {rsi:.1f} | Trend: {trend} | MACD: {hist:.2f}")
                     
+                    # Salva dados continuamente no arquivo market_data para análise posterior
+                    log_market_data(coin_name, current_price, rsi, ema200, hist, "ALTA" if current_price > ema200 else "BAIXA")
+                    
                     prev_rsi = rsi_history.get(sym, rsi)
                     rsi_history[sym] = rsi
                     
-                    # LONG ESTRITO: Tendência + Sobrevenda + Reversão + Impulso
-                    if current_price > ema200 and rsi <= 25 and rsi > prev_rsi and hist > 0: 
+                    if rsi is not None:
+                        add_log(f"🔍 DEBUG {coin_name}: RSI={rsi:.1f} (precisa <=30 para LONG) | EMA200={ema200:.1f} | MACD={hist:.4f} (precisa >0)")
+                    
+                    # LONG ESTRITO: Tendência + Sobrevenda + Reversão
+                    if current_price > ema200 and rsi <= 30 and rsi > prev_rsi: 
                         add_log(f"🛡️ SINAL LONG DE SOBREVIVÊNCIA em {coin_name}!")
                         amount_to_buy = (trade_amount * leverage) / current_price
                         tp_price = round(current_price * (1 + (config['take_profit_pct']/100)), 2)
@@ -180,8 +224,8 @@ def run_survival_scalper(exchange, symbol='MULTI'):
                                 log_trade(sym, 'ENTRADA', 'LONG', current_price, rsi, trade_amount, leverage, tp_price, sl_price, collateral_usd, '✅ SUCESSO')
                         except Exception as e: add_log(f"❌ Erro: {e}")
                             
-                    # SHORT ESTRITO: Tendência Baixa + Sobrecompra + Reversão + Impulso
-                    elif current_price < ema200 and rsi >= 75 and rsi < prev_rsi and hist < 0: 
+                    # SHORT ESTRITO: Tendência Baixa + Sobrecompra + Reversão
+                    elif current_price < ema200 and rsi >= 70 and rsi < prev_rsi: 
                         add_log(f"🛡️ SINAL SHORT DE SOBREVIVÊNCIA em {coin_name}!")
                         amount_to_sell = (trade_amount * leverage) / current_price
                         tp_price = round(current_price * (1 - (config['take_profit_pct']/100)), 2)
