@@ -245,11 +245,11 @@ def detect_market_regime(indicators):
 def calculate_futures_position_sizes(regime, total_equity, current_price, leverage):
     """Retorna (long_size_usdt, short_size_usdt, long_contracts, short_contracts)."""
     alloc = {
-        MarketRegime.STRONG_BULL: (0.70, 0.15),
-        MarketRegime.WEAK_BULL:   (0.45, 0.20),
+        MarketRegime.STRONG_BULL: (0.50, 0.20),
+        MarketRegime.WEAK_BULL:   (0.35, 0.25),
         MarketRegime.RANGING:     (0.30, 0.30),
-        MarketRegime.WEAK_BEAR:   (0.20, 0.45),
-        MarketRegime.STRONG_BEAR: (0.15, 0.70),
+        MarketRegime.WEAK_BEAR:   (0.25, 0.35),
+        MarketRegime.STRONG_BEAR: (0.20, 0.50),
         MarketRegime.CHOPPY:      (0.10, 0.10),
     }
     long_alloc, short_alloc = alloc.get(regime, (0.10, 0.10))
@@ -265,17 +265,26 @@ def calculate_futures_position_sizes(regime, total_equity, current_price, levera
     return long_notional, short_notional, long_contracts, short_contracts
 
 def set_leverage(exchange, symbol, leverage):
-    """Ajusta alavancagem para o par (isolado)."""
+    """Ajusta alavancagem para o par e define modo cross para usar multi-colateral no UTA."""
     try:
         if not getattr(exchange, 'markets', None):
             exchange.load_markets()
         market = exchange.market(symbol)
-        exchange.set_leverage(leverage, symbol, {'marginMode': 'isolated'})
-        add_log(f"Alavancagem definida: {leverage}x isolado para {symbol}")
+        
+        # Primeiro garantir que está em marginMode cross
+        try:
+            exchange.set_margin_mode('cross', symbol)
+        except Exception as e:
+            if "not modified" not in str(e).lower() and "110026" not in str(e):
+                add_log(f"Aviso margin mode: {e}")
+                
+        # Depois setar a alavancagem
+        exchange.set_leverage(leverage, symbol)
+        add_log(f"Alavancagem definida: {leverage}x CROSS para {symbol}")
         return True
     except Exception as e:
         if "leverage not modified" in str(e).lower() or "110043" in str(e):
-            add_log(f"Alavancagem já está configurada em {leverage}x para {symbol}")
+            add_log(f"Alavancagem já está configurada em {leverage}x CROSS para {symbol}")
             return True
         add_log(f"Erro ao definir alavancagem: {e}")
         return False
@@ -311,24 +320,41 @@ def adjust_futures_positions(exchange, symbol, current_price,
     """Ajusta posições long/short para os targets, respeitando a alavancagem."""
     min_trade = max(0.5, total_equity * 0.01)
     
+    if not getattr(exchange, 'markets', None) or symbol not in exchange.markets:
+        exchange.load_markets()
+    
+    market = exchange.market(symbol)
+    
     # Ajusta Long
     diff_long = target_long_notional - current_long_notional
     if abs(diff_long) > min_trade:
         if diff_long > 0:
             # Comprar mais contratos long
             buy_qty = diff_long / current_price
-            if diff_long > 1.0: # Bybit costuma exigir min $1 ou quantia minima
-                add_log(f"Aumentando LONG em ${diff_long:.2f} ({buy_qty:.4f} contratos)")
+            try:
+                final_qty = float(exchange.amount_to_precision(symbol, buy_qty))
+            except Exception:
+                final_qty = 0.0
+            
+            if final_qty > 0:
+                add_log(f"Aumentando LONG em ${diff_long:.2f} ({final_qty} contratos)")
                 try:
-                    exchange.create_market_buy_order(symbol, buy_qty)
+                    exchange.create_market_buy_order(symbol, final_qty)
                 except Exception as e:
                     add_log(f"Erro compra long: {e}")
+            else:
+                add_log(f"Tamanho LONG ({buy_qty:.4f}) menor que a precisão mínima do par. Ignorando aumento.")
         else:
             # Reduzir long
             sell_qty = min(abs(diff_long) / current_price, long_qty * 0.99)
-            if sell_qty > 0 and abs(diff_long) > 1.0:
-                add_log(f"Reduzindo LONG em ${abs(diff_long):.2f} ({sell_qty:.4f} contratos)")
-                close_position(exchange, symbol, 'long', sell_qty)
+            try:
+                final_qty = float(exchange.amount_to_precision(symbol, sell_qty))
+            except Exception:
+                final_qty = 0.0
+            
+            if final_qty > 0:
+                add_log(f"Reduzindo LONG em ${abs(diff_long):.2f} ({final_qty} contratos)")
+                close_position(exchange, symbol, 'long', final_qty)
 
     # Ajusta Short
     diff_short = target_short_notional - current_short_notional
@@ -336,18 +362,30 @@ def adjust_futures_positions(exchange, symbol, current_price,
         if diff_short > 0:
             # Aumentar short (vender)
             sell_qty = diff_short / current_price
-            if diff_short > 1.0:
-                add_log(f"Aumentando SHORT em ${diff_short:.2f} ({sell_qty:.4f} contratos)")
+            try:
+                final_qty = float(exchange.amount_to_precision(symbol, sell_qty))
+            except Exception:
+                final_qty = 0.0
+            
+            if final_qty > 0:
+                add_log(f"Aumentando SHORT em ${diff_short:.2f} ({final_qty} contratos)")
                 try:
-                    exchange.create_market_sell_order(symbol, sell_qty)
+                    exchange.create_market_sell_order(symbol, final_qty)
                 except Exception as e:
                     add_log(f"Erro venda short: {e}")
+            else:
+                add_log(f"Tamanho SHORT ({sell_qty:.4f}) menor que a precisão mínima do par. Ignorando aumento.")
         else:
             # Reduzir short (comprar)
             buy_qty = min(abs(diff_short) / current_price, short_qty * 0.99)
-            if buy_qty > 0 and abs(diff_short) > 1.0:
-                add_log(f"Reduzindo SHORT em ${abs(diff_short):.2f} ({buy_qty:.4f} contratos)")
-                close_position(exchange, symbol, 'short', buy_qty)
+            try:
+                final_qty = float(exchange.amount_to_precision(symbol, buy_qty))
+            except Exception:
+                final_qty = 0.0
+            
+            if final_qty > 0:
+                add_log(f"Reduzindo SHORT em ${abs(diff_short):.2f} ({final_qty} contratos)")
+                close_position(exchange, symbol, 'short', final_qty)
 
 # -------------------------------------------------------------------
 # LOOP PRINCIPAL
@@ -384,13 +422,26 @@ def run_leveraged_long_short(exchange, symbol='BTC/USDT:USDT', leverage=None):
     last_adjustment_scan = 0
     scan_count = 0
 
-    # Para cálculo de equity
+    # Para cálculo de equity e metas diárias
     usdt_balance = get_unified_balance(exchange, 'USDT')
+    initial_equity = usdt_balance if usdt_balance > 0 else 1.0
     current_equity = usdt_balance
+    
+    add_log(f"💰 Equity Inicial: ${initial_equity:.2f} | Meta +20%: ${initial_equity*1.2:.2f} | Stop -20%: ${initial_equity*0.8:.2f}")
 
     try:
         while bot_state["is_running"]:
             scan_count += 1
+            
+            # Filtro de Liquidez (00h às 06h UTC)
+            utc_hour = datetime.utcnow().hour
+            if 0 <= utc_hour < 6:
+                bot_state["status"] = "⏳ Pausado (Baixa Liquidez UTC)"
+                add_log(f"[{datetime.utcnow().strftime('%H:%M')} UTC] Horário de baixa liquidez. Bot pausado.")
+                time.sleep(60)
+                continue
+            else:
+                bot_state["status"] = f"🟢 Long/Short {leverage}x"
 
             # Atualiza saldo USDT (equity)
             try:
@@ -430,12 +481,50 @@ def run_leveraged_long_short(exchange, symbol='BTC/USDT:USDT', leverage=None):
 
             # Posições atuais
             long_pos, short_pos = get_positions(exchange, symbol)
+            
+            # Verifica Stop Fixo por PnL (-10% da posição)
+            panic_close = False
+            for pos in [long_pos, short_pos]:
+                if pos and pos['contracts'] > 0:
+                    # 'percentage' no ccxt costuma ser o PnL% ROE (ex: -10 para -10%)
+                    roe = pos.get('percentage', 0)
+                    if roe is None: # Tenta estimar se percentage não existir
+                        unrealized = pos.get('unrealizedPnl', 0)
+                        margin = pos.get('initialMargin', 0)
+                        if margin and margin > 0:
+                            roe = (unrealized / margin) * 100
+                        else:
+                            roe = 0
+                            
+                    if roe <= -10.0:
+                        add_log(f"🚨 PANIC STOP! Posição {pos['side']} atingiu {roe:.2f}% de ROE.")
+                        panic_close = True
+            
+            if panic_close:
+                add_log("Fechando TODAS as posições e desligando o bot por segurança.")
+                if long_pos and long_pos['contracts'] > 0:
+                    close_position(exchange, symbol, 'long', long_pos['contracts'])
+                if short_pos and short_pos['contracts'] > 0:
+                    close_position(exchange, symbol, 'short', short_pos['contracts'])
+                bot_state["is_running"] = False
+                continue
+
             long_contracts = long_pos['contracts'] if long_pos else 0
             short_contracts = short_pos['contracts'] if short_pos else 0
             long_notional = long_contracts * current_price
             short_notional = short_contracts * current_price
             # Equity = USDT livre + PnL não realizado (aproximado)
             total_equity = usdt_balance
+            
+            # Verifica Metas Diárias
+            if total_equity >= initial_equity * 1.20:
+                add_log(f"🏆 META DIÁRIA ATINGIDA! Equity cresceu 20% (${total_equity:.2f}). Encerrando operações.")
+                bot_state["is_running"] = False
+                continue
+            if total_equity <= initial_equity * 0.80:
+                add_log(f"🛑 STOP DIÁRIO ATINGIDO! Equity caiu 20% (${total_equity:.2f}). Encerrando operações para proteger capital.")
+                bot_state["is_running"] = False
+                continue
 
             bot_state["current_price"] = current_price
             bot_state["usdt_balance"] = total_equity

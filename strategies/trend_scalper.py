@@ -100,7 +100,7 @@ def run_trend_scalper(exchange, symbol='SOL/USDT:USDT', leverage=100, check_inte
                             exchange.create_order(symbol, 'limit', 'sell', amount_to_buy, tp_price, params={'reduceOnly': True})
                             
                             sl_price = current_price * 0.99
-                            exchange.create_order(symbol, 'stop', 'sell', amount_to_buy, sl_price, params={'reduceOnly': True, 'stopPrice': sl_price})
+                            exchange.create_order(symbol, 'stop', 'sell', amount_to_buy, sl_price, params={'reduceOnly': True, 'stopPrice': sl_price, 'triggerDirection': 'descending'})
                         except Exception as e:
                             add_log(f"❌ Erro Scalper LONG: {e}")
                             
@@ -116,7 +116,7 @@ def run_trend_scalper(exchange, symbol='SOL/USDT:USDT', leverage=100, check_inte
                             exchange.create_order(symbol, 'limit', 'buy', amount_to_sell, tp_price, params={'reduceOnly': True})
                             
                             sl_price = current_price * 1.01
-                            exchange.create_order(symbol, 'stop', 'buy', amount_to_sell, sl_price, params={'reduceOnly': True, 'stopPrice': sl_price})
+                            exchange.create_order(symbol, 'stop', 'buy', amount_to_sell, sl_price, params={'reduceOnly': True, 'stopPrice': sl_price, 'triggerDirection': 'ascending'})
                         except Exception as e:
                             add_log(f"❌ Erro Scalper SHORT: {e}")
             

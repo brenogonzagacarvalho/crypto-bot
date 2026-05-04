@@ -1,3 +1,4 @@
+from core.market_data import fetch_historical_data
 import time
 import sys
 import os
@@ -59,7 +60,7 @@ def set_margin_leverage(exchange, symbol, leverage):
 
 def run_reverse_martingale(exchange, symbol='BTC/USDT:USDT', leverage=100, check_interval=30):
     is_multi = (symbol == "MULTI")
-    symbols_to_scan = ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT"] if is_multi else [symbol]
+    symbols_to_scan = ["ETH/USDT:USDT", "BTC/USDT:USDT", "SOL/USDT:USDT", "XRP/USDT:USDT"] if is_multi else [symbol]
     
     init_trade_log()
     
@@ -184,13 +185,16 @@ def run_reverse_martingale(exchange, symbol='BTC/USDT:USDT', leverage=100, check
                     bot_state["rsi"] = rsi
                     bot_state["rsi_status"] = f"Rev.Mart W:{wins_consecutivos}"
                     
+                    # Define a alavancagem máxima segura permitida pela Bybit para a moeda
+                    coin_leverage = 50 if coin_name in ['BTC', 'ETH'] else 25
+                    
                     trend = "ALTA 📈" if current_price > ema200 else "BAIXA 📉"
                     macd_status = "FORÇA ⚡" if abs(hist) > abs(hist*0.1) else "FRACO ☁️"
                     
                     add_log(f"  {coin_name}: ${current_price:,.2f} | RSI: {rsi:.1f} | Tendência: {trend} | MACD: {hist:.2f}")
                     
                     detalhes_scan = {"ema200": f"{ema200:.2f}", "macd": f"{hist:.4f}", "msg": f"Trend: {trend}"}
-                    log_trade(sym, 'SCAN', '-', current_price, rsi, current_trade_amount, leverage, 0, 0, collateral_usd, wins_consecutivos, trend, detalhes_scan)
+                    log_trade(sym, 'SCAN', '-', current_price, rsi, current_trade_amount, coin_leverage, 0, 0, collateral_usd, wins_consecutivos, trend, detalhes_scan)
                     
                     prev_rsi = rsi_history.get(sym, rsi)
                     rsi_history[sym] = rsi
@@ -198,33 +202,36 @@ def run_reverse_martingale(exchange, symbol='BTC/USDT:USDT', leverage=100, check
                     # GATILHO LONG: Preço > EMA200 (Tendência de Alta) + RSI Subindo + MACD Histograma Positivo
                     if current_price > ema200 and rsi <= 35 and rsi > prev_rsi and hist > 0:
                         add_log(f"🔥 SINAL LONG PROFISSIONAL em {coin_name}!")
-                        amount_to_buy = (current_trade_amount * leverage) / current_price
+                        amount_to_buy = (current_trade_amount * coin_leverage) / current_price
                         tp_price = round(current_price * 1.01, 2)
                         sl_price = round(current_price * 0.992, 2)
                         entry_limit_price = round(current_price, 2)
                         
                         try:
+                            # Tenta ajustar a alavancagem logo antes de entrar para garantir
+                            set_margin_leverage(exchange, sym, coin_leverage)
                             order, filled = place_maker_entry(exchange, sym, 'buy', amount_to_buy, entry_limit_price, tp_price, sl_price)
                             if filled:
                                 in_position, active_symbol, entry_price, entry_side = True, sym, current_price, 'LONG'
                                 found_entry = True
-                                log_trade(sym, 'ENTRADA', 'LONG', current_price, rsi, current_trade_amount, leverage, tp_price, sl_price, collateral_usd, wins_consecutivos, '✅ SUCESSO', detalhes_scan)
+                                log_trade(sym, 'ENTRADA', 'LONG', current_price, rsi, current_trade_amount, coin_leverage, tp_price, sl_price, collateral_usd, wins_consecutivos, '✅ SUCESSO', detalhes_scan)
                         except Exception as e: add_log(f"❌ Erro: {e}")
                             
                     # GATILHO SHORT: Preço < EMA200 (Tendência de Baixa) + RSI Caindo + MACD Histograma Negativo
                     elif current_price < ema200 and rsi >= 65 and rsi < prev_rsi and hist < 0:
                         add_log(f"🔥 SINAL SHORT PROFISSIONAL em {coin_name}!")
-                        amount_to_sell = (current_trade_amount * leverage) / current_price
+                        amount_to_sell = (current_trade_amount * coin_leverage) / current_price
                         tp_price = round(current_price * 0.99, 2)
                         sl_price = round(current_price * 1.008, 2)
                         entry_limit_price = round(current_price, 2)
                         
                         try:
+                            set_margin_leverage(exchange, sym, coin_leverage)
                             order, filled = place_maker_entry(exchange, sym, 'sell', amount_to_sell, entry_limit_price, tp_price, sl_price)
                             if filled:
                                 in_position, active_symbol, entry_price, entry_side = True, sym, current_price, 'SHORT'
                                 found_entry = True
-                                log_trade(sym, 'ENTRADA', 'SHORT', current_price, rsi, current_trade_amount, leverage, tp_price, sl_price, collateral_usd, wins_consecutivos, '✅ SUCESSO', detalhes_scan)
+                                log_trade(sym, 'ENTRADA', 'SHORT', current_price, rsi, current_trade_amount, coin_leverage, tp_price, sl_price, collateral_usd, wins_consecutivos, '✅ SUCESSO', detalhes_scan)
                         except Exception as e: add_log(f"❌ Erro: {e}")
                     
                     time.sleep(0.5)
@@ -245,7 +252,10 @@ def run_reverse_martingale(exchange, symbol='BTC/USDT:USDT', leverage=100, check
                             pnl_pct = ((entry_price - current_price) / entry_price) * 100 * leverage
                         
                         pnl_emoji = "🟢" if pnl_pct >= 0 else "🔴"
-                        add_log(f"📊 {coin_name} {entry_side} | ${entry_price:,.2f} → ${current_price:,.2f} | P&L: {pnl_emoji} {pnl_pct:+.1f}%")
+                        nivel_atual = min(wins_consecutivos, meta_wins) + 1
+                        
+                        add_log(f"📊 [RM Clássico Nível {nivel_atual}] {coin_name} {entry_side} ({leverage}x)")
+                        add_log(f"  🎯 Preço: {entry_price:,.2f} → {current_price:,.2f} | P&L: {pnl_emoji} {pnl_pct:+.2f}%")
                         
                     positions = exchange.fetch_positions([active_symbol])
                     has_position = False
@@ -254,7 +264,7 @@ def run_reverse_martingale(exchange, symbol='BTC/USDT:USDT', leverage=100, check
                         if contracts > 0:
                             has_position = True
                             unrealized_pnl = float(pos.get('unrealizedPnl', 0))
-                            add_log(f"  💰 Contratos: {contracts} | PnL: ${unrealized_pnl:.4f}")
+                            add_log(f"  💰 Tamanho: {contracts} contratos | PnL Unrealized: ${unrealized_pnl:+.4f} USD")
                             break
                     
                     if not has_position:

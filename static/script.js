@@ -178,6 +178,10 @@ function switchTab(tabId) {
     // Mostra o selecionado
     document.getElementById('tab-' + tabId).classList.add('active');
     document.getElementById('tab-btn-' + tabId).classList.add('active');
+    
+    if (tabId === 'history') {
+        fetchHistory();
+    }
 }
 
 async function fetchPositions() {
@@ -228,5 +232,48 @@ async function manualCloseAll() {
         fetchPositions();
     } catch (error) {
         alert("Erro ao fechar posições.");
+    }
+}
+
+async function fetchHistory() {
+    try {
+        const response = await fetch('/api/history');
+        const data = await response.json();
+        
+        const body = document.getElementById('history-body');
+        
+        if (data.history) {
+            body.innerHTML = '';
+            
+            if (data.history.length === 0) {
+                body.innerHTML = '<tr><td colspan="7" style="text-align:center;">Nenhum histórico encontrado.</td></tr>';
+            } else {
+                data.history.forEach(trade => {
+                    const tr = document.createElement('tr');
+                    
+                    const direcaoClass = trade.direcao.includes('LONG') ? 'side-long' : (trade.direcao.includes('SHORT') ? 'side-short' : '');
+                    
+                    let lucroHTML = '-';
+                    if (trade.lucro && trade.lucro !== '-') {
+                        const isPositive = trade.lucro.includes('+') || !trade.lucro.includes('-');
+                        const colorClass = isPositive ? 'pnl-positive' : 'pnl-negative';
+                        lucroHTML = `<span class="${colorClass}">${trade.lucro}</span>`;
+                    }
+                    
+                    tr.innerHTML = `
+                        <td>${trade.data}</td>
+                        <td>${trade.estrategia}</td>
+                        <td><strong>${trade.moeda}</strong></td>
+                        <td class="${direcaoClass}">${trade.direcao}</td>
+                        <td>$${parseFloat(trade.preco).toFixed(2)}</td>
+                        <td>${trade.status}</td>
+                        <td>${lucroHTML}</td>
+                    `;
+                    body.appendChild(tr);
+                });
+            }
+        }
+    } catch (error) {
+        console.error("Erro ao buscar histórico:", error);
     }
 }

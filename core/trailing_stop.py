@@ -121,17 +121,22 @@ class TrailingStopEngine:
     
     def calculate_stepped_stop_long(self, current_price):
         profit_pct = ((current_price - self.entry_price) / self.entry_price) * 100
-        if profit_pct > 0:
-            steps = int(profit_pct)
-            protected_profit = steps * 0.7
+        # Aumentado a sensibilidade do trailing stop: a cada 0.2% de lucro na moeda (ignora alavancagem)
+        if profit_pct >= 0.2:
+            # Trava o lucro garantindo o pagamento das taxas (0.07% a 0.1% em média)
+            steps = int(profit_pct / 0.2)
+            protected_profit = (steps * 0.2) - 0.05 # Deixa uma margem de segurança de 0.05% para não estopar muito perto
+            # Garante que o stop protegido seja NO MÍNIMO a entrada + 0.15% (cobre taxas e sobra lucro)
+            protected_profit = max(0.15, protected_profit)
             return self.entry_price + (self.entry_price * protected_profit / 100)
         return self.initial_stop
     
     def calculate_stepped_stop_short(self, current_price):
         profit_pct = ((self.entry_price - current_price) / self.entry_price) * 100
-        if profit_pct > 0:
-            steps = int(profit_pct)
-            protected_profit = steps * 0.7
+        if profit_pct >= 0.2:
+            steps = int(profit_pct / 0.2)
+            protected_profit = (steps * 0.2) - 0.05
+            protected_profit = max(0.15, protected_profit)
             return self.entry_price - (self.entry_price * protected_profit / 100)
         return self.initial_stop
     

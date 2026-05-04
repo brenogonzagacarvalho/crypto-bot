@@ -266,6 +266,8 @@ def run_survival_scalper(exchange, symbol='MULTI'):
                         add_log(f"🏁 RESULTADO: {res_txt} | {resultado:+.2f} USD")
                         add_log(f"{'='*40}")
                         
+                        log_trade(active_symbol, 'SAÍDA', entry_side, current_price if 'current_price' in locals() else 0, 0, trade_amount if 'trade_amount' in locals() else 0, leverage, 0, 0, new_collateral, res_txt, f"${resultado:+.4f}")
+                        
                         in_position = False
                         active_symbol = None
                         last_trade_time = time.time()

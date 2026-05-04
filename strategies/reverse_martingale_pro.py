@@ -40,7 +40,7 @@ def run_reverse_martingale_pro(exchange, symbol='BTC/USDT:USDT'):
     init_trade_log()
     
     is_multi = (symbol == "MULTI")
-    symbols_to_scan = ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT"] if is_multi else [symbol]
+    symbols_to_scan = ["ETH/USDT:USDT", "BTC/USDT:USDT", "SOL/USDT:USDT", "XRP/USDT:USDT"] if is_multi else [symbol]
     
     if not is_multi:
         base_coin = symbol.split('/')[0]
@@ -139,6 +139,15 @@ def run_reverse_martingale_pro(exchange, symbol='BTC/USDT:USDT'):
                     prev_rsi = rsi_history.get(sym, rsi)
                     rsi_history[sym] = rsi
                     
+                    # LOG DO SCANNER (Monitor de Saídas)
+                    trend = "ALTA 📈" if current_price > ema200 else "BAIXA 📉"
+                    macd_status = "FORÇA ⚡" if abs(hist) > abs(hist*0.1) else "FRACO ☁️"
+                    add_log(f"  {base_coin}: ${current_price:,.2f} | RSI: {rsi:.1f} | Tendência: {trend} | MACD: {hist:.2f}")
+                    
+                    # Logando o scan no CSV para visualização posterior no Histórico (opcional)
+                    detalhes_scan = {"ema200": f"{ema200:.2f}", "macd": f"{hist:.4f}", "msg": f"Trend: {trend}"}
+                    log_trade(sym, 'SCAN', '-', current_price, rsi, trade_amount, current_leverage, wins_consecutivos, 0, 0, trend, detalhes_scan.get("msg", ""))
+                    
                     # GATILHO LONG PRO
                     if current_price > ema200 and rsi <= 30 and rsi > prev_rsi and hist > 0:
                         add_log(f"🔥 SINAL LONG PRO em {base_coin}!")
@@ -171,15 +180,42 @@ def run_reverse_martingale_pro(exchange, symbol='BTC/USDT:USDT'):
                 
             elif in_position and active_symbol:
                 try:
+                    coin_name = active_symbol.split('/')[0]
+                    bot_state["coin_name"] = coin_name
                     closes = fetch_ohlcv_data(exchange, active_symbol, timeframe='1m', limit=10)
                     if closes and closes['c']:
                         current_price = closes['c'][-1]
                         bot_state["current_price"] = current_price
                         
+                        # Calculando PnL
+                        active_leverage = 25 if active_symbol.startswith('BTC') else 30
+                        if entry_side == 'LONG':
+                            pnl_pct = ((current_price - entry_price) / entry_price) * 100 * active_leverage
+                            distancia_stop = ((current_price - trailing_engine.current_stop_price) / current_price) * 100
+                        else:
+                            pnl_pct = ((entry_price - current_price) / entry_price) * 100 * active_leverage
+                            distancia_stop = ((trailing_engine.current_stop_price - current_price) / current_price) * 100
+                        
+                        pnl_emoji = "🟢" if pnl_pct >= 0 else "🔴"
+                        nivel_atual = min(wins_consecutivos, 4) + 1
+                        
+                        add_log(f"📊 [RM PRO Nível {nivel_atual}] {coin_name} {entry_side} ({active_leverage}x)")
+                        add_log(f"  🎯 Preço: {entry_price:,.2f} → {current_price:,.2f} | P&L: {pnl_emoji} {pnl_pct:+.2f}%")
+                        add_log(f"  🛡️ Trailing Stop: ${trailing_engine.current_stop_price:,.4f} (Distância: {distancia_stop:.2f}%)")
+                        
+                        # Buscar informações da posição (PnL em USD e Tamanho)
+                        positions = exchange.fetch_positions([active_symbol])
+                        for pos in positions:
+                            contracts = float(pos.get('contracts', 0))
+                            if contracts > 0:
+                                unrealized_pnl = float(pos.get('unrealizedPnl', 0))
+                                add_log(f"  💰 Tamanho: {contracts} contratos | PnL Unrealized: ${unrealized_pnl:+.4f} USD")
+                                break
+                        
                         # Atualiza o Trailing Stop localmente
                         new_stop, adjusted = trailing_engine.update_price(current_price)
                         if adjusted:
-                            add_log(f"🛡️ Trailing Stop Ajustado para ${new_stop:.4f}")
+                            add_log(f"  ⚙️ Trailing Stop movido para ${new_stop:,.4f} acompanhando preço!")
                         
                         # Verifica Stop Loss
                         if trailing_engine.should_execute_stop(current_price):

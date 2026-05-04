@@ -265,13 +265,12 @@ def run_live_predictor(exchange, symbol='BTC/USDT', check_interval=60):
                     venda_acionada = True
                     motivo = f"🔴 VENDA DE REVERSÃO! Score: {score}"
 
-                if venda_acionada:
                     coin_to_sell = get_free_balance(exchange, base_coin)
-                    sell_pct = min(abs(score) / 100, 0.80) if score < 0 else 1.0 # 100% no SL
+                    sell_pct = 1.0 # Sempre vende 100% da posição para evitar poeira e limite mínimo da Bybit
                     amount_to_sell = coin_to_sell * sell_pct
 
                     if amount_to_sell > 0:
-                        add_log(f"{motivo} | Venda de {sell_pct*100:.0f}%: {amount_to_sell:.8f} {base_coin}")
+                        add_log(f"{motivo} | Venda Total (100%): {amount_to_sell:.8f} {base_coin}")
 
                         if execute_spot_order(exchange, symbol, 'sell', amount_to_sell):
                             trades_today += 1

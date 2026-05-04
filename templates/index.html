@@ -18,6 +18,7 @@
                 <nav class="tab-nav">
                     <button id="tab-btn-dashboard" class="tab-btn active" onclick="switchTab('dashboard')">Dashboard</button>
                     <button id="tab-btn-positions" class="tab-btn" onclick="switchTab('positions')">Posições Abertas <span id="pos-count" class="mini-badge">0</span></button>
+                    <button id="tab-btn-history" class="tab-btn" onclick="switchTab('history')">Histórico</button>
                 </nav>
             </div>
             <div id="status-badge" class="badge">🔴 Desligado</div>
@@ -123,6 +124,33 @@
                             </thead>
                             <tbody id="positions-body">
                                 <tr><td colspan="6" style="text-align:center;">Nenhuma posição aberta.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            <!-- Aba: Histórico -->
+            <div id="tab-history" class="tab-content">
+                <div class="glass-card" style="width: 100%; max-width: 100%;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                        <h2>Histórico de Operações</h2>
+                        <button class="btn btn-primary" onclick="fetchHistory()" style="width: auto; padding: 0.5rem 1.5rem;">🔄 ATUALIZAR</button>
+                    </div>
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Data/Hora</th>
+                                    <th>Estratégia</th>
+                                    <th>Moeda</th>
+                                    <th>Direção</th>
+                                    <th>Preço</th>
+                                    <th>Status</th>
+                                    <th>Lucro / Perda</th>
+                                </tr>
+                            </thead>
+                            <tbody id="history-body">
+                                <tr><td colspan="7" style="text-align:center;">Nenhum histórico encontrado.</td></tr>
                             </tbody>
                         </table>
                     </div>

@@ -131,6 +131,64 @@ def close_all():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/history')
+def get_history():
+    import csv
+    import glob
+    log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+    all_trades = []
+    
+    # Busca todos os arquivos CSV em logs
+    csv_files = glob.glob(os.path.join(log_dir, '*.csv'))
+    for file_path in csv_files:
+        if 'market_data' in file_path or 'trend_history' in file_path:
+            continue # Ignora arquivos de log de mercado
+            
+        strategy_name = os.path.basename(file_path).replace('.csv', '').replace('_trades', '').capitalize()
+            
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    # Ignora os scans, mostra apenas as entradas e saídas
+                    tipo = row.get('Tipo', '').upper()
+                    if tipo == 'SCAN':
+                        continue
+                    
+                    data_hora = row.get('Data/Hora', '')
+                    if not data_hora: continue
+                    
+                    detalhes = row.get('Detalhes', '-')
+                    lucro = '-'
+                    
+                    if tipo in ['SAÍDA', 'SAIDA'] or 'WIN' in row.get('Status', '') or 'LOSS' in row.get('Status', '') or 'LUCRO' in row.get('Status', '') or 'META' in row.get('Status', ''):
+                        if detalhes.startswith('+$') or detalhes.startswith('-$'):
+                            lucro = detalhes
+                        elif 'Lucro:' in detalhes:
+                            lucro = detalhes.split('Lucro:')[1].strip()
+                            
+                    trade = {
+                        'data': data_hora,
+                        'estrategia': strategy_name,
+                        'moeda': row.get('Moeda', '-'),
+                        'tipo': tipo,
+                        'direcao': row.get('Direção', '-'),
+                        'preco': row.get('Preço', '-'),
+                        'valor': row.get('Valor ($)', row.get('Quantidade', '-')),
+                        'alavancagem': row.get('Alavancagem', '-'),
+                        'status': row.get('Status', '-'),
+                        'detalhes': detalhes,
+                        'lucro': lucro
+                    }
+                    all_trades.append(trade)
+        except Exception as e:
+            print(f"Erro lendo {file_path}: {e}")
+            
+    # Ordena da mais recente para a mais antiga
+    all_trades.sort(key=lambda x: x['data'], reverse=True)
+    
+    return jsonify({"history": all_trades, "status": "ok"})
+
 @app.route('/api/start', methods=['POST'])
 def start_bot():
     global exchange
