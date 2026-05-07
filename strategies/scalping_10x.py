@@ -130,10 +130,14 @@ def run_scalping_10x(exchange, symbol='BTC/USDT:USDT', leverage=10, check_interv
 
             # --- MONITORAMENTO DE POSIÇÕES ABERTAS ---
             try:
-                positions = exchange.fetch_positions(symbols_to_scan)
+                all_positions = []
+                for sym in symbols_to_scan:
+                    try:
+                        all_positions.extend(exchange.fetch_positions([sym]))
+                    except: pass
                 current_open_symbols = set()
                 
-                for pos in positions:
+                for pos in all_positions:
                     contracts = float(pos.get('contracts', 0))
                     if contracts > 0:
                         sym = pos['symbol']
@@ -141,6 +145,7 @@ def run_scalping_10x(exchange, symbol='BTC/USDT:USDT', leverage=10, check_interv
                         
                         if sym not in active_positions:
                             active_positions[sym] = {'side': pos['side'].upper(), 'entry_price': float(pos['entryPrice'])}
+                            log_trade(sym, 'ENTRADA', pos['side'].upper(), float(pos['entryPrice']), 0, trade_amount, leverage, 0, 0, collateral_usd, '✅ Detectada')
                             
                         unrealized_pnl = float(pos.get('unrealizedPnl', 0))
                         liq_price = pos.get('liquidationPrice')
@@ -207,8 +212,8 @@ def run_scalping_10x(exchange, symbol='BTC/USDT:USDT', leverage=10, check_interv
                     if current_price > ema200 and rsi <= 45 and rsi > prev_rsi: 
                         add_log(f"🛡️ SCALP LONG em {coin_name}!")
                         amount_to_buy = (trade_amount * leverage) / current_price
-                        tp_price = round(current_price * 1.0025, 2)
-                        sl_price = round(current_price * 0.995, 2)
+                        tp_price = float(exchange.price_to_precision(sym, current_price * 1.0025))
+                        sl_price = float(exchange.price_to_precision(sym, current_price * 0.995))
                         
                         try:
                             order, filled = place_maker_entry(exchange, sym, 'buy', amount_to_buy, current_price, tp_price, sl_price)
@@ -221,8 +226,8 @@ def run_scalping_10x(exchange, symbol='BTC/USDT:USDT', leverage=10, check_interv
                     elif current_price < ema200 and rsi >= 55 and rsi < prev_rsi: 
                         add_log(f"🛡️ SCALP SHORT em {coin_name}!")
                         amount_to_sell = (trade_amount * leverage) / current_price
-                        tp_price = round(current_price * 0.9975, 2)
-                        sl_price = round(current_price * 1.005, 2)
+                        tp_price = float(exchange.price_to_precision(sym, current_price * 0.9975))
+                        sl_price = float(exchange.price_to_precision(sym, current_price * 1.005))
                         
                         try:
                             order, filled = place_maker_entry(exchange, sym, 'sell', amount_to_sell, current_price, tp_price, sl_price)
