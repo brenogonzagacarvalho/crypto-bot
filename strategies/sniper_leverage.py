@@ -1,3 +1,4 @@
+from core.market_data import fetch_historical_data
 import time
 import sys
 import os
