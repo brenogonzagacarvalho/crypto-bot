@@ -125,6 +125,7 @@ def run_survival_scalper(exchange, symbol='MULTI'):
 
     active_positions = {}
     MAX_POSITIONS = 2
+    check_interval = 5
     scan_count = 0
     rsi_history = {}
     last_trade_time = 0
@@ -258,3 +259,6 @@ def run_survival_scalper(exchange, symbol='MULTI'):
             for _ in range(check_interval):
                 if not bot_state["is_running"]: break
                 time.sleep(1)
+    except Exception as e:
+        add_log(f"⚠️ Erro crítico no loop principal: {e}")
+        time.sleep(5)
