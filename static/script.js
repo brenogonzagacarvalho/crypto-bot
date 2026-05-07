@@ -197,21 +197,34 @@ async function fetchPositions() {
             body.innerHTML = '';
             
             if (data.positions.length === 0) {
-                body.innerHTML = '<tr><td colspan="6" style="text-align:center;">Nenhuma posição aberta.</td></tr>';
+                body.innerHTML = '<tr><td colspan="8" style="text-align:center;">Nenhuma posição aberta.</td></tr>';
             } else {
                 data.positions.forEach(pos => {
                     const tr = document.createElement('tr');
-                    const sideClass = pos.side.toLowerCase() === 'long' ? 'side-long' : 'side-short';
+                    const isLong = pos.side.toLowerCase() === 'long';
+                    const sideColor = isLong ? 'var(--crypto-green)' : 'var(--crypto-red)';
                     const pnl = parseFloat(pos.unrealizedPnl);
                     const pnlClass = pnl >= 0 ? 'pnl-positive' : 'pnl-negative';
                     
+                    const roi = pos.percentage ? parseFloat(pos.percentage) : 0;
+                    const baseCoin = pos.symbol.split('/')[0];
+                    const symbolLabel = pos.symbol.replace(':USDT', '').replace('/', '');
+                    
                     tr.innerHTML = `
-                        <td><strong>${pos.symbol}</strong></td>
-                        <td class="${sideClass}">${pos.side}</td>
-                        <td>${pos.leverage}x</td>
-                        <td>${pos.contracts}</td>
-                        <td>$${parseFloat(pos.entryPrice).toFixed(2)}</td>
-                        <td class="${pnlClass}">${pnl >= 0 ? '+' : ''}${pnl.toFixed(4)} USDT</td>
+                        <td>
+                            <strong>${symbolLabel} Perpétuos</strong><br>
+                            <span style="font-size:0.75rem; color:${sideColor}">Cruzar ${pos.leverage}.00x</span>
+                        </td>
+                        <td><span style="color:${sideColor}">${pos.contracts} ${baseCoin}</span></td>
+                        <td><strong>${parseFloat(pos.positionValue || 0).toFixed(2)} USDT</strong></td>
+                        <td><strong>${parseFloat(pos.entryPrice).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 4})}</strong></td>
+                        <td>${parseFloat(pos.markPrice || pos.entryPrice).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 4})}</td>
+                        <td><strong style="color:#f59e0b">${pos.liquidationPrice && parseFloat(pos.liquidationPrice) > 0 ? parseFloat(pos.liquidationPrice).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 4}) : '-'}</strong></td>
+                        <td class="${pnlClass}">
+                            <strong>${pnl >= 0 ? '+' : ''}${pnl.toFixed(4)} USDT</strong><br>
+                            <span style="font-size:0.75rem">${roi >= 0 ? '+' : ''}${roi.toFixed(2)}%</span>
+                        </td>
+                        <td><button class="btn btn-danger" style="padding:0.3rem 0.6rem; font-size:0.75rem; background-color:#333; border:none;" onclick="manualCloseAll()">Mercado</button></td>
                     `;
                     body.appendChild(tr);
                 });

@@ -93,13 +93,31 @@ def get_positions():
         open_positions = []
         for p in positions:
             if float(p.get('contracts', 0) or 0) > 0:
+                info = p.get('info', {})
+                liq_price = info.get('liqPrice') or p.get('liquidationPrice') or 0
+                initial_margin = info.get('positionIM') or p.get('initialMargin') or 0
+                unrealized_pnl = float(p.get('unrealizedPnl') or 0)
+                mark_price = info.get('markPrice') or 0
+                position_value = info.get('positionValue') or 0
+                
+                try:
+                    margin_float = float(initial_margin)
+                    roi = (unrealized_pnl / margin_float * 100) if margin_float > 0 else 0
+                except:
+                    roi = 0
+
                 open_positions.append({
                     "symbol": p['symbol'],
                     "side": p['side'],
                     "contracts": p['contracts'],
                     "entryPrice": p['entryPrice'],
-                    "unrealizedPnl": p['unrealizedPnl'],
-                    "leverage": p['leverage']
+                    "unrealizedPnl": unrealized_pnl,
+                    "leverage": p['leverage'],
+                    "liquidationPrice": liq_price,
+                    "percentage": roi,
+                    "initialMargin": initial_margin,
+                    "markPrice": mark_price,
+                    "positionValue": position_value
                 })
         return jsonify({"positions": open_positions, "status": "ok"})
     except Exception as e:

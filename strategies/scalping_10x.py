@@ -92,11 +92,9 @@ def run_scalping_10x(exchange, symbol='BTC/USDT:USDT', leverage=10, check_interv
         set_margin_leverage(exchange, sym, leverage)
     
     # Mão ajustada ao saldo (máximo $1.50, nunca mais que 80% da margem)
-    trade_amount = min(1.5, collateral_usd * 0.80)
-    in_position = False
-    active_symbol = None
-    entry_price = 0.0
-    entry_side = None
+    trade_amount = min(1.5, collateral_usd * 0.40)
+    active_positions = {}
+    MAX_POSITIONS = 2
     scan_count = 0
     rsi_history = {}
     
@@ -112,46 +110,74 @@ def run_scalping_10x(exchange, symbol='BTC/USDT:USDT', leverage=10, check_interv
         while bot_state["is_running"]:
             scan_count += 1
             
-            collateral_usd, collateral_coin, collateral_raw = get_collateral_usd(exchange)
-            bot_state["usdt_balance"] = collateral_usd
-            if collateral_coin == 'BTC':
-                bot_state["coin_balance"] = collateral_raw
-            
-            # Meta diária (exige lucro mínimo de $0.50)
-            if not in_position and collateral_usd >= daily_target_usd:
-                lucro = collateral_usd - starting_balance
-                if lucro >= 0.50:
-                    add_log(f"{'='*50}")
-                    add_log(f"🏆🏆🏆 META DIÁRIA BATIDA! 🏆🏆🏆")
-                    add_log(f"Início: ${starting_balance:.2f} → Final: ${collateral_usd:.2f}")
-                    add_log(f"Lucro: +${lucro:.2f} (+{(lucro/starting_balance)*100:.1f}%)")
-                    add_log(f"{'='*50}")
-                    log_trade('-', 'META_DIARIA', '-', 0, 0, 0, leverage, 0, 0, collateral_usd, '🏆 META BATIDA', f"Lucro: +${lucro:.2f}")
-                    bot_state["status"] = "🏆 Meta Diária Atingida!"
-                    bot_state["is_running"] = False
-                    break
+            try:
+                collateral_usd, collateral_coin, _ = get_collateral_usd(exchange)
+                bot_state["usdt_balance"] = collateral_usd
+            except Exception as e:
+                add_log(f"⚠️ Erro ao ler banca: {e}")
+                time.sleep(2)
+                continue
                 
-            if collateral_usd < 0.50:
-                add_log(f"❌ Saldo insuficiente: ${collateral_usd:.2f}. Desligando...")
-                bot_state["is_running"] = False
-                break
-
-            # Ajusta mão ao saldo
-            trade_amount = min(1.5, collateral_usd * 0.80)
+            trade_amount = min(1.5, collateral_usd * 0.40)
             
-            if not in_position and trade_amount < 0.10:
+            if len(active_positions) < MAX_POSITIONS and trade_amount < 0.10:
                 add_log(f"⚠️ Mão muito pequena (${trade_amount:.2f}). Aguardando...")
                 for _ in range(check_interval):
                     if not bot_state["is_running"]: break
                     time.sleep(1)
                 continue
 
-            if not in_position:
-                add_log(f"── Scanner #{scan_count} | ${collateral_usd:.2f} ({collateral_coin}) | Mão: ${trade_amount:.2f} ──")
+            # --- MONITORAMENTO DE POSIÇÕES ABERTAS ---
+            try:
+                positions = exchange.fetch_positions(symbols_to_scan)
+                current_open_symbols = set()
                 
-                found_entry = False
+                for pos in positions:
+                    contracts = float(pos.get('contracts', 0))
+                    if contracts > 0:
+                        sym = pos['symbol']
+                        current_open_symbols.add(sym)
+                        
+                        if sym not in active_positions:
+                            active_positions[sym] = {'side': pos['side'].upper(), 'entry_price': float(pos['entryPrice'])}
+                            
+                        unrealized_pnl = float(pos.get('unrealizedPnl', 0))
+                        liq_price = pos.get('liquidationPrice')
+                        roi = pos.get('percentage')
+                        margin = pos.get('initialMargin')
+                        
+                        liq_str = f" | Liq: ${float(liq_price):,.2f}" if liq_price else ""
+                        roi_str = f" | ROI: {float(roi):+.2f}%" if roi is not None else ""
+                        marg_str = f" | Margem: ${float(margin):.2f}" if margin else ""
+                        
+                        add_log(f"📊 {sym} {pos['side'].upper()} Aberto:")
+                        add_log(f"  💰 Qtd: {contracts}{marg_str}{liq_str}")
+                        add_log(f"  💵 PnL: ${unrealized_pnl:+.4f}{roi_str}")
+                
+                # Checa fechamentos
+                closed_symbols = list(set(active_positions.keys()) - current_open_symbols)
+                for sym in closed_symbols:
+                    new_collateral_usd, _, _ = get_collateral_usd(exchange)
+                    resultado = new_collateral_usd - collateral_usd
+                    resultado_emoji = "🏆 LUCRO" if resultado > 0 else "💀 LOSS"
+                    
+                    add_log(f"{'='*50}")
+                    add_log(f"{resultado_emoji}: Fechamento em {sym} | ${resultado:+.4f}")
+                    add_log(f"{'='*50}")
+                    
+                    log_trade(sym, 'SAÍDA', active_positions[sym]['side'], 0, 0, trade_amount, leverage, 0, 0, new_collateral_usd, resultado_emoji, f"${resultado:+.4f}")
+                    del active_positions[sym]
+                    collateral_usd = new_collateral_usd
+            except Exception as e:
+                add_log(f"⚠️ Erro ao monitorar posições: {e}")
+
+            # --- BUSCA POR NOVAS ENTRADAS ---
+            if len(active_positions) < MAX_POSITIONS:
+                add_log(f"── Scanner #{scan_count} | Abertas {len(active_positions)}/{MAX_POSITIONS} | Mão: ${trade_amount:.2f} ──")
+                
                 for sym in symbols_to_scan:
-                    if not bot_state["is_running"] or found_entry: break
+                    if not bot_state["is_running"] or len(active_positions) >= MAX_POSITIONS: break
+                    if sym in active_positions: continue
                     
                     coin_name = sym.split('/')[0]
                     bot_state["coin_name"] = coin_name
@@ -169,118 +195,43 @@ def run_scalping_10x(exchange, symbol='BTC/USDT:USDT', leverage=10, check_interv
                     
                     bot_state["current_price"] = current_price
                     bot_state["rsi"] = rsi
-                    
                     trend = "ALTA 📈" if current_price > ema200 else "BAIXA 📉"
-                    add_log(f"  {coin_name}: ${current_price:,.2f} | RSI: {rsi:.1f} | Tendência: {trend} | MACD: {hist:.2f}")
                     
                     detalhes_scan = {"ema200": f"{ema200:.2f}", "macd": f"{hist:.4f}", "msg": f"Trend: {trend}"}
-                    log_trade(sym, 'SCAN', '-', current_price, rsi, trade_amount, leverage, 0, 0, collateral_usd, trend, detalhes_scan)
                     
                     prev_rsi = rsi_history.get(sym, rsi)
                     rsi_history[sym] = rsi
                     
                     # GATILHO LONG: Acima da EMA 200 + RSI Subindo + MACD Positivo
                     if current_price > ema200 and rsi <= 45 and rsi > prev_rsi: 
-                        add_log(f"🛡️ SCALP LONG PROFISSIONAL em {coin_name}!")
+                        add_log(f"🛡️ SCALP LONG em {coin_name}!")
                         amount_to_buy = (trade_amount * leverage) / current_price
                         tp_price = round(current_price * 1.0025, 2)
                         sl_price = round(current_price * 0.995, 2)
-                        entry_limit_price = round(current_price, 2)
                         
                         try:
-                            order, filled = place_maker_entry(exchange, sym, 'buy', amount_to_buy, entry_limit_price, tp_price, sl_price)
+                            order, filled = place_maker_entry(exchange, sym, 'buy', amount_to_buy, current_price, tp_price, sl_price)
                             if filled:
-                                in_position, active_symbol, entry_price, entry_side = True, sym, current_price, 'LONG'
-                                found_entry = True
+                                active_positions[sym] = {'side': 'LONG', 'entry_price': current_price}
                                 log_trade(sym, 'ENTRADA', 'LONG', current_price, rsi, trade_amount, leverage, tp_price, sl_price, collateral_usd, '✅ SUCESSO', detalhes_scan)
                         except Exception as e: add_log(f"❌ Erro: {e}")
                             
                     # GATILHO SHORT: Abaixo da EMA 200 + RSI Caindo + MACD Negativo
                     elif current_price < ema200 and rsi >= 55 and rsi < prev_rsi: 
-                        add_log(f"🛡️ SCALP SHORT PROFISSIONAL em {coin_name}!")
+                        add_log(f"🛡️ SCALP SHORT em {coin_name}!")
                         amount_to_sell = (trade_amount * leverage) / current_price
                         tp_price = round(current_price * 0.9975, 2)
                         sl_price = round(current_price * 1.005, 2)
-                        entry_limit_price = round(current_price, 2)
                         
                         try:
-                            order, filled = place_maker_entry(exchange, sym, 'sell', amount_to_sell, entry_limit_price, tp_price, sl_price)
+                            order, filled = place_maker_entry(exchange, sym, 'sell', amount_to_sell, current_price, tp_price, sl_price)
                             if filled:
-                                in_position, active_symbol, entry_price, entry_side = True, sym, current_price, 'SHORT'
-                                found_entry = True
+                                active_positions[sym] = {'side': 'SHORT', 'entry_price': current_price}
                                 log_trade(sym, 'ENTRADA', 'SHORT', current_price, rsi, trade_amount, leverage, tp_price, sl_price, collateral_usd, '✅ SUCESSO', detalhes_scan)
                         except Exception as e: add_log(f"❌ Erro: {e}")
-                    elif rsi <= 45:
-                        add_log(f"  ⏳ {coin_name}: RSI caindo ({prev_rsi:.1f}→{rsi:.1f}), aguardando reversão...")
-                    elif rsi >= 55:
-                        add_log(f"  ⏳ {coin_name}: RSI subindo ({prev_rsi:.1f}→{rsi:.1f}), aguardando reversão...")
-                    
+                        
                     time.sleep(0.5)
             
-            elif in_position and active_symbol:
-                try:
-                    coin_name = active_symbol.split('/')[0]
-                    bot_state["coin_name"] = coin_name
-                    closes = fetch_historical_data(exchange, active_symbol, timeframe='1m', limit=15)
-                    
-                    if closes:
-                        current_price = closes[-1]
-                        bot_state["current_price"] = current_price
-                        
-                        if entry_side == 'LONG':
-                            pnl_pct = ((current_price - entry_price) / entry_price) * 100 * leverage
-                        else:
-                            pnl_pct = ((entry_price - current_price) / entry_price) * 100 * leverage
-                        
-                        pnl_emoji = "🟢" if pnl_pct >= 0 else "🔴"
-                        add_log(f"📊 {coin_name} {entry_side} | ${entry_price:,.2f} → ${current_price:,.2f} | P&L: {pnl_emoji} {pnl_pct:+.1f}%")
-                    
-                    positions = exchange.fetch_positions([active_symbol])
-                    has_position = False
-                    for pos in positions:
-                        contracts = float(pos.get('contracts', 0))
-                        if contracts > 0:
-                            has_position = True
-                            unrealized_pnl = float(pos.get('unrealizedPnl', 0))
-                            liq_price = pos.get('liquidationPrice')
-                            roi = pos.get('percentage')
-                            margin = pos.get('initialMargin')
-                            
-                            liq_str = f" | Liq: ${float(liq_price):,.2f}" if liq_price else ""
-                            roi_str = f" | ROI: {float(roi):+.2f}%" if roi is not None else ""
-                            marg_str = f" | Margem: ${float(margin):.2f}" if margin else ""
-                            
-                            add_log(f"  💰 Qtd: {contracts}{marg_str}{liq_str}")
-                            add_log(f"  💵 PnL Aberto: ${unrealized_pnl:+.4f}{roi_str}")
-                            break
-                    
-                    if not has_position:
-                        new_collateral_usd, _, _ = get_collateral_usd(exchange)
-                        resultado = new_collateral_usd - collateral_usd
-                        resultado_emoji = "🏆 LUCRO" if resultado >= 0 else "💀 LOSS"
-                        
-                        add_log(f"{'='*50}")
-                        add_log(f"{resultado_emoji}: {entry_side} em {coin_name} | ${resultado:+.4f}")
-                        add_log(f"{'='*50}")
-                        
-                        log_trade(active_symbol, 'SAÍDA', entry_side, current_price if closes else 0, 0, trade_amount, leverage, 0, 0, new_collateral_usd, resultado_emoji, f"${resultado:+.4f}")
-                        
-                        in_position = False
-                        active_symbol = None
-                        entry_price = 0.0
-                        entry_side = None
-                        add_log("🔄 Voltando ao Scanner...")
-                except Exception as e:
-                    add_log(f"⚠️ Aviso posição: {e}")
-                
             for _ in range(check_interval):
                 if not bot_state["is_running"]: break
                 time.sleep(1)
-                
-    except Exception as e:
-        add_log(f"Erro Crítico Scalper 10x: {e}")
-        log_trade('-', 'ERRO_CRITICO', '-', 0, 0, 0, leverage, 0, 0, 0, '💥 CRASH', str(e))
-    finally:
-        bot_state["is_running"] = False
-        bot_state["status"] = "🔴 Desligado"
-
