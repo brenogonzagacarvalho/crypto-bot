@@ -241,7 +241,16 @@ def run_sniper_leverage(exchange, symbol='BTC/USDT:USDT', leverage=100, check_in
                         if contracts > 0:
                             has_position = True
                             unrealized_pnl = float(pos.get('unrealizedPnl', 0))
-                            add_log(f"  💰 Contratos: {contracts} | PnL: ${unrealized_pnl:.4f}")
+                            liq_price = pos.get('liquidationPrice')
+                            roi = pos.get('percentage')
+                            margin = pos.get('initialMargin')
+                            
+                            liq_str = f" | Liq: ${float(liq_price):,.2f}" if liq_price else ""
+                            roi_str = f" | ROI: {float(roi):+.2f}%" if roi is not None else ""
+                            marg_str = f" | Margem: ${float(margin):.2f}" if margin else ""
+                            
+                            add_log(f"  💰 Qtd: {contracts}{marg_str}{liq_str}")
+                            add_log(f"  💵 PnL Aberto: ${unrealized_pnl:+.4f}{roi_str}")
                             break
                     
                     if not has_position:

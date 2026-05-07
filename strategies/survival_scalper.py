@@ -254,8 +254,20 @@ def run_survival_scalper(exchange, symbol='MULTI'):
                     positions = exchange.fetch_positions([active_symbol])
                     has_position = False
                     for pos in positions:
-                        if float(pos.get('contracts', 0)) > 0:
+                        contracts = float(pos.get('contracts', 0))
+                        if contracts > 0:
                             has_position = True
+                            unrealized_pnl = float(pos.get('unrealizedPnl', 0))
+                            liq_price = pos.get('liquidationPrice')
+                            roi = pos.get('percentage')
+                            margin = pos.get('initialMargin')
+                            
+                            liq_str = f" | Liq: ${float(liq_price):,.2f}" if liq_price else ""
+                            roi_str = f" | ROI: {float(roi):+.2f}%" if roi is not None else ""
+                            marg_str = f" | Margem: ${float(margin):.2f}" if margin else ""
+                            
+                            add_log(f"  💰 Qtd: {contracts}{marg_str}{liq_str}")
+                            add_log(f"  💵 PnL Aberto: ${unrealized_pnl:+.4f}{roi_str}")
                             break
                     
                     if not has_position:
