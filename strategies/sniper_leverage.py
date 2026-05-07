@@ -173,7 +173,7 @@ def run_sniper_leverage(exchange, symbol='BTC/USDT:USDT', leverage=100, check_in
                     rsi_history[sym] = rsi
                         
                     # GATILHO LONG: Acima da EMA 200 + RSI Subindo + MACD Positivo
-                    if current_price > ema200 and rsi <= 30 and rsi > prev_rsi and hist > 0: 
+                    if current_price > ema200 and rsi <= 45 and rsi > prev_rsi: 
                         add_log(f"🎯 SNIPER LONG PROFISSIONAL em {coin_name}!")
                         trade_size = collateral_usd * 0.95
                         amount_to_buy = (trade_size * leverage) / current_price
@@ -190,7 +190,7 @@ def run_sniper_leverage(exchange, symbol='BTC/USDT:USDT', leverage=100, check_in
                         except Exception as e: add_log(f"❌ Erro: {e}")
                             
                     # GATILHO SHORT: Abaixo da EMA 200 + RSI Caindo + MACD Negativo
-                    elif current_price < ema200 and rsi >= 70 and rsi < prev_rsi and hist < 0:
+                    elif current_price < ema200 and rsi >= 55 and rsi < prev_rsi:
                         add_log(f"🎯 SNIPER SHORT PROFISSIONAL em {coin_name}!")
                         trade_size = collateral_usd * 0.95
                         amount_to_sell = (trade_size * leverage) / current_price
@@ -205,9 +205,9 @@ def run_sniper_leverage(exchange, symbol='BTC/USDT:USDT', leverage=100, check_in
                                 found_entry = True
                                 log_trade(sym, 'ENTRADA', 'SHORT', current_price, rsi, amount_to_sell, leverage, tp_price, collateral_usd, '✅ SUCESSO', detalhes_scan)
                         except Exception as e: add_log(f"❌ Erro: {e}")
-                    elif rsi <= 30:
+                    elif rsi <= 45:
                         add_log(f"  ⏳ {coin_name}: RSI caindo ({prev_rsi:.1f}→{rsi:.1f}), aguardando reversão...")
-                    elif rsi >= 70:
+                    elif rsi >= 55:
                         add_log(f"  ⏳ {coin_name}: RSI subindo ({prev_rsi:.1f}→{rsi:.1f}), aguardando reversão...")
                     
                     time.sleep(0.5)

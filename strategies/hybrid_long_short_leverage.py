@@ -544,8 +544,8 @@ def run_leveraged_long_short(exchange, symbol='BTC/USDT:USDT', leverage=None):
 
             # Verifica se precisa ajustar (após cooldown)
             can_adjust = (scan_count - last_adjustment_scan) >= COOLDOWN_SCANS
-            if can_adjust and regime != MarketRegime.CHOPPY:
-                min_trade_value = max(0.5, total_equity * 0.01)
+            if can_adjust:
+                min_trade_value = max(0.5, total_equity * 0.02)
                 need_adjust = (abs(target_long - long_notional) > min_trade_value or
                                abs(target_short - short_notional) > min_trade_value)
                 if need_adjust and trades_this_regime < 5:

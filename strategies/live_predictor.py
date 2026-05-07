@@ -154,8 +154,8 @@ def run_live_predictor(exchange, symbol='BTC/USDT', check_interval=60):
 
     # Parâmetros de risco
     RISK_PER_TRADE = 0.80   # 80% do saldo por trade (conta pequena)
-    MIN_SCORE = 50           # Só opera com score >= 50
-    COOLDOWN = 2             # Scans entre trades
+    MIN_SCORE = 20           # Só opera com score >= 20
+    COOLDOWN = 0             # Scans entre trades
 
     add_log(f"⚙️ Risco: {RISK_PER_TRADE*100:.0f}% | Score mín: {MIN_SCORE} | Cooldown: {COOLDOWN}")
 

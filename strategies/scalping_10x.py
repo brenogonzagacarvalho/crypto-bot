@@ -1,3 +1,4 @@
+from core.market_data import fetch_historical_data
 import time
 import sys
 import os
@@ -179,7 +180,7 @@ def run_scalping_10x(exchange, symbol='BTC/USDT:USDT', leverage=10, check_interv
                     rsi_history[sym] = rsi
                     
                     # GATILHO LONG: Acima da EMA 200 + RSI Subindo + MACD Positivo
-                    if current_price > ema200 and rsi <= 30 and rsi > prev_rsi and hist > 0: 
+                    if current_price > ema200 and rsi <= 45 and rsi > prev_rsi: 
                         add_log(f"🛡️ SCALP LONG PROFISSIONAL em {coin_name}!")
                         amount_to_buy = (trade_amount * leverage) / current_price
                         tp_price = round(current_price * 1.0025, 2)
@@ -195,7 +196,7 @@ def run_scalping_10x(exchange, symbol='BTC/USDT:USDT', leverage=10, check_interv
                         except Exception as e: add_log(f"❌ Erro: {e}")
                             
                     # GATILHO SHORT: Abaixo da EMA 200 + RSI Caindo + MACD Negativo
-                    elif current_price < ema200 and rsi >= 70 and rsi < prev_rsi and hist < 0: 
+                    elif current_price < ema200 and rsi >= 55 and rsi < prev_rsi: 
                         add_log(f"🛡️ SCALP SHORT PROFISSIONAL em {coin_name}!")
                         amount_to_sell = (trade_amount * leverage) / current_price
                         tp_price = round(current_price * 0.9975, 2)
@@ -209,9 +210,9 @@ def run_scalping_10x(exchange, symbol='BTC/USDT:USDT', leverage=10, check_interv
                                 found_entry = True
                                 log_trade(sym, 'ENTRADA', 'SHORT', current_price, rsi, trade_amount, leverage, tp_price, sl_price, collateral_usd, '✅ SUCESSO', detalhes_scan)
                         except Exception as e: add_log(f"❌ Erro: {e}")
-                    elif rsi <= 25:
+                    elif rsi <= 45:
                         add_log(f"  ⏳ {coin_name}: RSI caindo ({prev_rsi:.1f}→{rsi:.1f}), aguardando reversão...")
-                    elif rsi >= 75:
+                    elif rsi >= 55:
                         add_log(f"  ⏳ {coin_name}: RSI subindo ({prev_rsi:.1f}→{rsi:.1f}), aguardando reversão...")
                     
                     time.sleep(0.5)

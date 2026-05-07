@@ -24,7 +24,7 @@ def load_config():
         return {
             "max_leverage": 20, "risk_per_trade": 0.20, "max_daily_loss_pct": 0.30,
             "min_balance": 3.0, "take_profit_pct": 1.5, "stop_loss_pct": 0.8,
-            "cooldown_seconds": 120, "min_winrate_to_continue": 40
+            "cooldown_seconds": 30, "min_winrate_to_continue": 40
         }
 
 def init_trade_log():
@@ -207,10 +207,10 @@ def run_survival_scalper(exchange, symbol='MULTI'):
                     rsi_history[sym] = rsi
                     
                     if rsi is not None:
-                        add_log(f"🔍 DEBUG {coin_name}: RSI={rsi:.1f} (precisa <=30 para LONG) | EMA200={ema200:.1f} | MACD={hist:.4f} (precisa >0)")
+                        add_log(f"🔍 DEBUG {coin_name}: RSI={rsi:.1f} (precisa <=45 para LONG, >=55 para SHORT) | EMA200={ema200:.1f} | MACD={hist:.4f}")
                     
                     # LONG ESTRITO: Tendência + Sobrevenda + Reversão
-                    if current_price > ema200 and rsi <= 30 and rsi > prev_rsi: 
+                    if rsi <= 45 and rsi > prev_rsi: 
                         add_log(f"🛡️ SINAL LONG DE SOBREVIVÊNCIA em {coin_name}!")
                         amount_to_buy = (trade_amount * leverage) / current_price
                         tp_price = round(current_price * (1 + (config['take_profit_pct']/100)), 2)
@@ -225,7 +225,7 @@ def run_survival_scalper(exchange, symbol='MULTI'):
                         except Exception as e: add_log(f"❌ Erro: {e}")
                             
                     # SHORT ESTRITO: Tendência Baixa + Sobrecompra + Reversão
-                    elif current_price < ema200 and rsi >= 70 and rsi < prev_rsi: 
+                    elif rsi >= 55 and rsi < prev_rsi: 
                         add_log(f"🛡️ SINAL SHORT DE SOBREVIVÊNCIA em {coin_name}!")
                         amount_to_sell = (trade_amount * leverage) / current_price
                         tp_price = round(current_price * (1 - (config['take_profit_pct']/100)), 2)
