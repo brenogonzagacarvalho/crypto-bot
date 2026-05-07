@@ -122,7 +122,7 @@ async function startBot(strategyType = 'spot') {
         return;
     }
     
-    const isDerivatives = strategyType === 'sniper' || strategyType === 'martingale' || strategyType === 'trend' || strategyType === 'reverse_martingale' || strategyType === 'scalping_10x' || strategyType === 'survival' || strategyType === 'longshort_lev';
+    const isDerivatives = strategyType === 'sniper' || strategyType === 'martingale' || strategyType === 'trend' || strategyType === 'reverse_martingale' || strategyType === 'scalping_10x' || strategyType === 'survival' || strategyType === 'longshort_lev' || strategyType === 'double7';
     
     let symbol = "";
     if (selectedCoin === "MULTI") {

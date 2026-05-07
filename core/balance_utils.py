@@ -98,6 +98,24 @@ def place_maker_entry(exchange, symbol, side, amount, price, tp_price, sl_price,
     }
     
     try:
+        try:
+            # Formata amount e price para a precisão correta da exchange
+            market = exchange.market(symbol)
+            min_amount = market['limits']['amount']['min']
+            
+            # Garante que o amount não seja menor que o mínimo antes de formatar
+            if amount < min_amount:
+                amount = min_amount
+                
+            amount = float(exchange.amount_to_precision(symbol, amount))
+            price = float(exchange.price_to_precision(symbol, price))
+            
+            # Check secundário após amount_to_precision (que pode arredondar para baixo)
+            if amount < min_amount:
+                amount = min_amount
+        except:
+            pass
+            
         order = exchange.create_order(
             symbol=symbol,
             type='limit',
@@ -136,5 +154,7 @@ def place_maker_entry(exchange, symbol, side, amount, price, tp_price, sl_price,
         return order, False
         
     except Exception as e:
-        raise e
+        from core.shared_state import add_log
+        add_log(f"⚠️ Erro ao colocar ordem Maker ({symbol}): {e}")
+        return None, False
 

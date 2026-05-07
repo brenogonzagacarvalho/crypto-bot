@@ -356,8 +356,30 @@ def get_free_balance(exchange, coin):
         pass
     return 0.0
 
-def execute_market_order(exchange, symbol, side, amount, reduce_only=False):
-    """Executa ordem com parâmetros UTA"""
+def execute_market_order(exchange, symbol, side, amount, reduce_only=False, current_price=None):
+    """Executa ordem com parâmetros UTA, verificando limites mínimos"""
+    try:
+        if current_price is None:
+            current_price = exchange.fetch_ticker(symbol)['last']
+            
+        market = exchange.market(symbol)
+        min_cost = market.get('limits', {}).get('cost', {}).get('min')
+        min_amount = market.get('limits', {}).get('amount', {}).get('min')
+        
+        # Formata a quantidade para evitar erros de precisão decimal
+        amount = float(exchange.amount_to_precision(symbol, amount))
+        
+        if min_cost and (amount * current_price) < min_cost:
+            add_log(f"⚠️ Ordem {side.upper()} abortada: valor ${(amount * current_price):.2f} é menor que o mínimo (${min_cost})")
+            return False
+            
+        if min_amount and amount < min_amount:
+            add_log(f"⚠️ Ordem {side.upper()} abortada: quantidade {amount} é menor que a mínima ({min_amount})")
+            return False
+            
+    except Exception as e:
+        pass # Ignora erro de verificação prévia e tenta
+
     add_log(f"[ORDEM] {side.upper()} {amount:.8f} {symbol} (reduce={reduce_only})")
     try:
         # A API de Spot não aceita reduceOnly na V5 em alguns modos. Removemos preventivamente.
@@ -380,12 +402,33 @@ def execute_long_short_trade(exchange, symbol, action, current_price,
     """
     base_coin = symbol.split('/')[0]
     
+    # --- CONTROLE DE EXPOSIÇÃO TOTAL (Prevenção de 100% Comprado sem Hedge) ---
+    coin_bal_check = get_free_balance(exchange, base_coin)
+    usdt_bal_check = get_free_balance(exchange, 'USDT')
+    total_check = usdt_bal_check + (coin_bal_check * current_price)
+    
+    # Limita a exposição LONG a no máximo 80% do capital (garante 20% em caixa/hedge)
+    MAX_EXPOSURE_PCT = 0.80
+    max_allowed_long = total_check * MAX_EXPOSURE_PCT
+    
+    if target_long > max_allowed_long:
+        target_long = max_allowed_long
+        
+    if long_exposure > max_allowed_long + (total_check * 0.05): # Se passar de 85% por oscilação
+        excess = long_exposure - max_allowed_long
+        sell_amount = min(excess / current_price, coin_bal_check * 0.95)
+        if sell_amount > 0:
+            add_log(f"🛡️ HEDGE DE PROTEÇÃO: Exposição muito alta. Forçando venda de excesso (${excess:.2f})")
+            success = execute_market_order(exchange, symbol, 'sell', sell_amount, current_price=current_price)
+            if success:
+                long_exposure -= excess
+    
     # --- Ajusta LONG ---
     if target_long > long_exposure:
         # Precisa comprar mais
         buy_amount = (target_long - long_exposure) / current_price
         add_log(f"📈 Aumentando LONG: +${target_long - long_exposure:.2f} ({buy_amount:.8f} {base_coin})")
-        success = execute_market_order(exchange, symbol, 'buy', buy_amount)
+        success = execute_market_order(exchange, symbol, 'buy', buy_amount, current_price=current_price)
         if success:
             long_exposure = target_long
     
@@ -397,7 +440,7 @@ def execute_long_short_trade(exchange, symbol, action, current_price,
         
         if sell_amount > 0:
             add_log(f"📉 Reduzindo LONG: -${sell_value:.2f} ({sell_amount:.8f} {base_coin})")
-            success = execute_market_order(exchange, symbol, 'sell', sell_amount)
+            success = execute_market_order(exchange, symbol, 'sell', sell_amount, current_price=current_price)
             if success:
                 long_exposure = target_long
     
@@ -414,7 +457,7 @@ def execute_long_short_trade(exchange, symbol, action, current_price,
         coin_bal = get_free_balance(exchange, base_coin)
         sell_for_hedge = min(short_amount, coin_bal * 0.30)  # Max 30% para hedge
         if sell_for_hedge > 0:
-            execute_market_order(exchange, symbol, 'sell', sell_for_hedge)
+            execute_market_order(exchange, symbol, 'sell', sell_for_hedge, current_price=current_price)
             short_exposure += sell_for_hedge * current_price
     
     # Atualiza saldos

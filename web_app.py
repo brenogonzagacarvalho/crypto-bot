@@ -150,18 +150,30 @@ def get_history():
             with open(file_path, 'r', encoding='utf-8') as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    # Ignora os scans, mostra apenas as entradas e saídas
-                    tipo = row.get('Tipo', '').upper()
+                    # Normalização de nomes de colunas
+                    tipo = (row.get('Tipo') or row.get('Action') or '').upper()
                     if tipo == 'SCAN':
                         continue
-                    
-                    data_hora = row.get('Data/Hora', '')
+                        
+                    data_hora = row.get('Data/Hora') or row.get('Timestamp') or ''
                     if not data_hora: continue
                     
-                    detalhes = row.get('Detalhes', '-')
-                    lucro = '-'
+                    moeda = row.get('Moeda') or row.get('Symbol') or '-'
+                    direcao = row.get('Direção') or row.get('Side') or '-'
+                    preco = row.get('Preço') or row.get('Entry_Price') or '-'
+                    valor = row.get('Valor ($)') or row.get('Quantidade') or row.get('Tamanho $') or row.get('Size') or '-'
+                    status = row.get('Status') or '-'
+                    detalhes = row.get('Detalhes') or row.get('Reason') or '-'
+                    alavancagem = row.get('Alavancagem', '-')
                     
-                    if tipo in ['SAÍDA', 'SAIDA'] or 'WIN' in row.get('Status', '') or 'LOSS' in row.get('Status', '') or 'LUCRO' in row.get('Status', '') or 'META' in row.get('Status', ''):
+                    pnl = row.get('PnL $') or row.get('PnL_USDT')
+                    lucro = '-'
+                    if pnl and pnl not in ['0', '0.0', '0.00']:
+                        try:
+                            lucro = f"${float(pnl):+.4f}"
+                        except:
+                            lucro = pnl
+                    elif tipo in ['SAÍDA', 'SAIDA', 'CLOSE'] or 'WIN' in status or 'LOSS' in status or 'LUCRO' in status or 'META' in status:
                         if detalhes.startswith('+$') or detalhes.startswith('-$'):
                             lucro = detalhes
                         elif 'Lucro:' in detalhes:
@@ -170,13 +182,13 @@ def get_history():
                     trade = {
                         'data': data_hora,
                         'estrategia': strategy_name,
-                        'moeda': row.get('Moeda', '-'),
+                        'moeda': moeda,
                         'tipo': tipo,
-                        'direcao': row.get('Direção', '-'),
-                        'preco': row.get('Preço', '-'),
-                        'valor': row.get('Valor ($)', row.get('Quantidade', '-')),
-                        'alavancagem': row.get('Alavancagem', '-'),
-                        'status': row.get('Status', '-'),
+                        'direcao': direcao,
+                        'preco': preco,
+                        'valor': valor,
+                        'alavancagem': alavancagem,
+                        'status': status,
                         'detalhes': detalhes,
                         'lucro': lucro
                     }
@@ -239,6 +251,10 @@ def start_bot():
         from strategies.hybrid_long_short_leverage import run_leveraged_long_short
         add_log(f"Comando de INICIAR LONG/SHORT ALAVANCADO recebido para {symbol}...")
         thread = threading.Thread(target=run_leveraged_long_short, args=(exchange, symbol))
+    elif strategy == 'double7':
+        from strategies.double_in_7_days import run_double_7
+        add_log(f"Comando de INICIAR DOBRAR EM 7 DIAS recebido para {symbol}...")
+        thread = threading.Thread(target=run_double_7, args=(exchange, symbol))
     else:
         add_log(f"Comando de INICIAR SPOT recebido para {symbol}...")
         thread = threading.Thread(target=run_live_predictor, args=(exchange, symbol))
