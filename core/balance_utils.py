@@ -155,6 +155,10 @@ def place_maker_entry(exchange, symbol, side, amount, price, tp_price, sl_price,
         
     except Exception as e:
         from core.shared_state import add_log
-        add_log(f"⚠️ Erro ao colocar ordem Maker ({symbol}): {e}")
+        err_msg = str(e)
+        if "110007" in err_msg or "ab not enough" in err_msg:
+            add_log(f"⚠️ Saldo Insuficiente ({symbol}): O lote mínimo exige mais margem do que o saldo atual.")
+        else:
+            add_log(f"⚠️ Erro ao colocar ordem Maker ({symbol}): {e}")
         return None, False
 
