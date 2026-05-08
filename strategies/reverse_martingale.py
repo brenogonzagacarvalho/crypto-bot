@@ -8,7 +8,7 @@ from datetime import datetime
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.market_data import fetch_ohlcv_data, calculate_rsi, calculate_ema, calculate_macd
 from core.shared_state import bot_state, add_log
-from core.balance_utils import get_unified_balance, get_available_margin_usd, enable_btc_collateral, place_maker_entry
+from core.balance_utils import get_unified_balance, get_available_margin_usd, enable_btc_collateral, place_maker_entry, get_closed_pnl
 
 # --- SISTEMA DE LOG EM CSV ---
 LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'logs')
@@ -268,11 +268,8 @@ def run_reverse_martingale(exchange, symbol='BTC/USDT:USDT', leverage=100, check
                             break
                     
                     if not has_position:
-                        in_position = False
-                        active_symbol = None
-                        
                         new_collateral_usd, _, _ = get_collateral_usd(exchange)
-                        resultado = new_collateral_usd - collateral_usd
+                        resultado = get_closed_pnl(exchange, active_symbol, limit=1)
                         
                         if resultado > 0:
                             wins_consecutivos += 1
@@ -292,6 +289,8 @@ def run_reverse_martingale(exchange, symbol='BTC/USDT:USDT', leverage=100, check
                             add_log(f"{'='*50}")
                             log_trade('-', 'SAÍDA', entry_side or '-', current_price if closes else 0, 0, current_trade_amount, leverage, 0, 0, new_collateral_usd, wins_consecutivos, '🔴 LOSS', f"${resultado:.4f}")
                         
+                        in_position = False
+                        active_symbol = None
                         entry_price = 0.0
                         entry_side = None
                         bot_state["usdt_balance"] = new_collateral_usd

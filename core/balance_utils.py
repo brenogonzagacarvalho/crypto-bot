@@ -162,3 +162,25 @@ def place_maker_entry(exchange, symbol, side, amount, price, tp_price, sl_price,
             add_log(f"⚠️ Erro ao colocar ordem Maker ({symbol}): {e}")
         return None, False
 
+def get_closed_pnl(exchange, symbol, limit=1):
+    """
+    Busca o PnL exato da última posição fechada usando a API V5 da Bybit.
+    Inclui todas as taxas (funding, taker/maker fees).
+    """
+    try:
+        # ccxt formata symbol como 'BTC/USDT:USDT' mas a Bybit espera 'BTCUSDT' (ccxt normalmente traduz, mas para chamadas diretas pode precisar do id)
+        market = exchange.market(symbol)
+        bybit_symbol = market['id'] if market else symbol.replace('/', '').split(':')[0]
+        
+        resp = exchange.privateGetV5PositionClosedPnl({
+            'category': 'linear',
+            'symbol': bybit_symbol,
+            'limit': limit
+        })
+        closed_list = resp.get('result', {}).get('list', [])
+        if closed_list:
+            return float(closed_list[0].get('closedPnl', 0))
+    except Exception as e:
+        from core.shared_state import add_log
+        add_log(f"⚠️ Erro ao buscar PnL fechado: {e}")
+    return 0.0

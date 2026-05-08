@@ -8,7 +8,7 @@ from datetime import datetime
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.market_data import fetch_ohlcv_data, calculate_rsi, calculate_ema, calculate_macd
 from core.shared_state import bot_state, add_log
-from core.balance_utils import get_unified_balance, get_available_margin_usd, enable_btc_collateral, place_maker_entry
+from core.balance_utils import get_unified_balance, get_available_margin_usd, enable_btc_collateral, place_maker_entry, get_closed_pnl
 
 LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'logs')
 LOG_FILE = os.path.join(LOG_DIR, 'survival_trades.csv')
@@ -189,7 +189,7 @@ def run_survival_scalper(exchange, symbol='MULTI'):
                 closed_symbols = list(set(active_positions.keys()) - current_open_symbols)
                 for sym in closed_symbols:
                     new_collateral_usd, _, _ = get_collateral_usd(exchange)
-                    resultado = new_collateral_usd - collateral_usd
+                    resultado = get_closed_pnl(exchange, sym, limit=1)
                     resultado_emoji = "🏆 LUCRO" if resultado > 0 else "💀 LOSS"
                     
                     add_log(f"{'='*50}")
