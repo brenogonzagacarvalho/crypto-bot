@@ -12,6 +12,7 @@ from strategies.reverse_martingale import run_reverse_martingale
 from strategies.reverse_martingale_pro import run_reverse_martingale_pro
 from strategies.scalping_10x import run_scalping_10x
 from strategies.survival_scalper import run_survival_scalper
+from strategies.chameleon_strategy import run_chameleon_strategy
 import time
 import logging
 
@@ -194,6 +195,8 @@ def get_history():
                     elif tipo in ['SAÍDA', 'SAIDA', 'CLOSE'] or 'WIN' in status or 'LOSS' in status or 'LUCRO' in status or 'META' in status:
                         if detalhes.startswith('+$') or detalhes.startswith('-$'):
                             lucro = detalhes
+                        elif detalhes.startswith('$+') or detalhes.startswith('$-'):
+                            lucro = detalhes.replace('$+', '+$').replace('$-', '-$')
                         elif 'Lucro:' in detalhes:
                             lucro = detalhes.split('Lucro:')[1].strip()
                             
@@ -273,6 +276,12 @@ def start_bot():
         from strategies.double_in_7_days import run_double_7
         add_log(f"Comando de INICIAR DOBRAR EM 7 DIAS recebido para {symbol}...")
         thread = threading.Thread(target=run_double_7, args=(exchange, symbol))
+    elif strategy == 'chameleon':
+        # Garante formato linear perpetual (ex: ETH/USDT -> ETH/USDT:USDT)
+        if ':' not in symbol:
+            symbol = symbol.split('/')[0] + '/USDT:USDT'
+        add_log(f"Comando de INICIAR CAMALEÃO recebido para {symbol}...")
+        thread = threading.Thread(target=run_chameleon_strategy, args=(exchange, symbol))
     else:
         add_log(f"Comando de INICIAR SPOT recebido para {symbol}...")
         thread = threading.Thread(target=run_live_predictor, args=(exchange, symbol))

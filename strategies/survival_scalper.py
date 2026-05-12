@@ -124,7 +124,7 @@ def run_survival_scalper(exchange, symbol='MULTI'):
         except: pass
 
     active_positions = {}
-    MAX_POSITIONS = 2
+    MAX_POSITIONS = 3
     check_interval = 5
     scan_count = 0
     rsi_history = {}
@@ -144,7 +144,7 @@ def run_survival_scalper(exchange, symbol='MULTI'):
                 time.sleep(2)
                 continue
                 
-            trade_amount = min(1.5, collateral_usd * 0.40)
+            trade_amount = min(5.0, collateral_usd * 0.60)
             
             if len(active_positions) < MAX_POSITIONS and trade_amount < 0.10:
                 add_log(f"⚠️ Mão muito pequena (${trade_amount:.2f}). Aguardando...")
@@ -189,6 +189,8 @@ def run_survival_scalper(exchange, symbol='MULTI'):
                 closed_symbols = list(set(active_positions.keys()) - current_open_symbols)
                 for sym in closed_symbols:
                     new_collateral_usd, _, _ = get_collateral_usd(exchange)
+                    # Aguarda a Bybit registrar o PnL no endpoint closed-pnl (leva 2-4s)
+                    time.sleep(3)
                     resultado = get_closed_pnl(exchange, sym, limit=1)
                     resultado_emoji = "🏆 LUCRO" if resultado > 0 else "💀 LOSS"
                     
@@ -196,7 +198,15 @@ def run_survival_scalper(exchange, symbol='MULTI'):
                     add_log(f"{resultado_emoji}: Fechamento em {sym} | ${resultado:+.4f}")
                     add_log(f"{'='*50}")
                     
-                    log_trade(sym, 'SAÍDA', active_positions[sym]['side'], 0, 0, trade_amount, leverage, 0, 0, new_collateral_usd, resultado_emoji, f"${resultado:+.4f}")
+                    try:
+                        ticker = exchange.fetch_ticker(sym)
+                        close_price = float(ticker['last'])
+                    except:
+                        close_price = active_positions[sym]['entry_price']
+                        
+                    resultado_str = f"{'+$' if resultado >= 0 else '-$'}{abs(resultado):.4f}"
+                    
+                    log_trade(sym, 'SAÍDA', active_positions[sym]['side'], close_price, 0, trade_amount, leverage, 0, 0, new_collateral_usd, resultado_emoji, resultado_str)
                     del active_positions[sym]
                     collateral_usd = new_collateral_usd
             except Exception as e:

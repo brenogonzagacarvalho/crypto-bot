@@ -258,12 +258,13 @@ def run_sniper_leverage(exchange, symbol='BTC/USDT:USDT', leverage=100, check_in
                         resultado = get_closed_pnl(exchange, active_symbol, limit=1)
                         resultado_emoji = "🏆 LUCRO" if resultado >= 0 else "💀 LOSS"
                         
+                        resultado_str = f"{'+$' if resultado >= 0 else '-$'}{abs(resultado):.4f}"
                         add_log(f"{'='*50}")
-                        add_log(f"{resultado_emoji}: {entry_side} em {coin_name} | ${resultado:+.4f}")
+                        add_log(f"{resultado_emoji}: {entry_side} em {coin_name} | {resultado_str}")
                         add_log(f"${collateral_usd:.2f} → ${new_collateral_usd:.2f}")
                         add_log(f"{'='*50}")
                         
-                        log_trade(active_symbol, 'SAÍDA', entry_side, current_price if closes else 0, 0, 0, leverage, 0, new_collateral_usd, resultado_emoji, f"${resultado:+.4f}")
+                        log_trade(active_symbol, 'SAÍDA', entry_side, current_price if closes else 0, 0, 0, leverage, 0, new_collateral_usd, resultado_emoji, resultado_str)
                         
                         in_position = False
                         active_symbol = None

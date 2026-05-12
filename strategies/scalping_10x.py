@@ -167,11 +167,19 @@ def run_scalping_10x(exchange, symbol='BTC/USDT:USDT', leverage=10, check_interv
                     resultado = get_closed_pnl(exchange, sym, limit=1)
                     resultado_emoji = "🏆 LUCRO" if resultado > 0 else "💀 LOSS"
                     
+                    try:
+                        ticker = exchange.fetch_ticker(sym)
+                        close_price = float(ticker['last'])
+                    except:
+                        close_price = active_positions[sym]['entry_price']
+                        
+                    resultado_str = f"{'+$' if resultado >= 0 else '-$'}{abs(resultado):.4f}"
+                    
                     add_log(f"{'='*50}")
-                    add_log(f"{resultado_emoji}: Fechamento em {sym} | ${resultado:+.4f}")
+                    add_log(f"{resultado_emoji}: Fechamento em {sym} | {resultado_str}")
                     add_log(f"{'='*50}")
                     
-                    log_trade(sym, 'SAÍDA', active_positions[sym]['side'], 0, 0, trade_amount, leverage, 0, 0, new_collateral_usd, resultado_emoji, f"${resultado:+.4f}")
+                    log_trade(sym, 'SAÍDA', active_positions[sym]['side'], close_price, 0, trade_amount, leverage, 0, 0, new_collateral_usd, resultado_emoji, resultado_str)
                     del active_positions[sym]
                     collateral_usd = new_collateral_usd
             except Exception as e:
