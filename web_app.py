@@ -25,6 +25,8 @@ from strategies.survival_scalper import run_survival_scalper
 from strategies.chameleon_strategy import run_chameleon_strategy
 import time
 import logging
+from datetime import datetime
+import uuid
 
 # Desativa os logs de GET 200 OK do Flask/Werkzeug
 log = logging.getLogger('werkzeug')
@@ -117,6 +119,22 @@ def status():
                 
                 bot_state["funding_usdt"] = funding_usdt
                 bot_state["funding_btc"] = funding_btc
+                
+                # 3. Busca posições abertas reais para contar e somar PnL
+                open_pos_count = 0
+                total_unrealized_pnl = 0.0
+                try:
+                    pos_resp = exchange.fetch_positions()
+                    for pos in pos_resp:
+                        contracts = float(pos.get('contracts') or 0)
+                        if contracts > 0:
+                            open_pos_count += 1
+                            total_unrealized_pnl += float(pos.get('unrealizedPnl') or 0)
+                except Exception as pe:
+                    pass
+                
+                bot_state["open_positions_count"] = open_pos_count
+                bot_state["unrealized_pnl"] = total_unrealized_pnl
                 
             except Exception as e:
                 print(f"Erro ao atualizar saldos em background: {e}")

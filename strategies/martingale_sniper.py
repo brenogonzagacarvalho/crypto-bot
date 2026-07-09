@@ -33,7 +33,7 @@ def run_martingale_sniper(exchange, symbol='SOL/USDT:USDT', leverage=100, check_
     set_margin_leverage(exchange, symbol, leverage)
     
     # Sistema Martingale
-    base_trade_amount = 2.0  # Começa apostando 2 dólares de margem
+    base_trade_amount = max(2.0, initial_balance * 0.10)  # 10% do saldo (mínimo de $2.0)
     current_trade_amount = base_trade_amount
     in_position = False
     

@@ -64,10 +64,17 @@ function updateUI(data) {
         badge.style.boxShadow = "none";
     }
 
-    // Atualiza Saldos
     document.getElementById('coin-label').textContent = data.coin_name || "Moeda Base";
     document.getElementById('coin-balance').textContent = parseFloat(data.coin_balance || 0).toFixed(8);
     document.getElementById('usdt-balance').textContent = parseFloat(data.usdt_balance || 0).toFixed(2);
+
+    // Atualiza UPL (Lucro/Perda das operações abertas)
+    if (data.unrealized_pnl !== undefined) {
+        const pnlVal = parseFloat(data.unrealized_pnl || 0);
+        const pnlEl = document.getElementById('dashboard-unrealized-pnl');
+        pnlEl.textContent = `${pnlVal >= 0 ? '+' : ''}${pnlVal.toFixed(2)} USD`;
+        pnlEl.className = pnlVal >= 0 ? 'pnl-positive' : 'pnl-negative';
+    }
 
     // Atualiza Saldos de Financiamento na Tela Principal
     if (data.funding_usdt !== undefined) {
@@ -269,7 +276,7 @@ async function fetchHistory() {
             body.innerHTML = '';
             
             if (data.history.length === 0) {
-                body.innerHTML = '<tr><td colspan="7" style="text-align:center;">Nenhum histórico encontrado.</td></tr>';
+                body.innerHTML = '<tr><td colspan="8" style="text-align:center;">Nenhum histórico encontrado.</td></tr>';
             } else {
                 data.history.forEach(trade => {
                     const tr = document.createElement('tr');
@@ -283,9 +290,19 @@ async function fetchHistory() {
                         lucroHTML = `<span class="${colorClass}">${trade.lucro}</span>`;
                     }
                     
+                    let tipoHTML = '-';
+                    if (trade.tipo === 'ENTRADA') {
+                        tipoHTML = `<span class="badge" style="background: rgba(59, 130, 246, 0.2); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.4); padding: 0.1rem 0.4rem; border-radius: 4px; font-size: 0.75rem;">Abertura 📥</span>`;
+                    } else if (trade.tipo === 'SAÍDA' || trade.tipo === 'SAIDA') {
+                        tipoHTML = `<span class="badge" style="background: rgba(16, 185, 129, 0.2); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.4); padding: 0.1rem 0.4rem; border-radius: 4px; font-size: 0.75rem;">Fechamento 📤</span>`;
+                    } else {
+                        tipoHTML = trade.tipo || '-';
+                    }
+                    
                     tr.innerHTML = `
                         <td>${trade.data}</td>
                         <td>${trade.estrategia}</td>
+                        <td>${tipoHTML}</td>
                         <td><strong>${trade.moeda}</strong></td>
                         <td class="${direcaoClass}">${trade.direcao}</td>
                         <td>$${parseFloat(trade.preco).toFixed(2)}</td>

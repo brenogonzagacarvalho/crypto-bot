@@ -41,6 +41,10 @@
                                     <span class="label">Total Equidade (USD)</span>
                                     <span class="value" id="usdt-balance" style="font-weight: 800; font-size: 1.1rem; color: #fff;">0.00</span>
                                 </div>
+                                <div class="balance-item" style="font-size: 0.85rem; margin-top: 0.2rem; margin-bottom: 0.2rem;">
+                                    <span class="label">PnL Operações Abertas</span>
+                                    <span class="value" id="dashboard-unrealized-pnl" style="font-weight: 700; color: var(--text-secondary);">0.00 USD</span>
+                                </div>
                                 <div class="balance-item" style="font-size: 0.85rem; opacity: 0.8;">
                                     <span class="label" id="coin-label">Moeda Base</span>
                                     <span class="value" id="coin-balance">0.00000000</span>
@@ -163,13 +167,7 @@
                     </div>
                 </div>
 
-                <!-- Terminal de Logs -->
-                <div class="glass-card terminal-card">
-                    <h2>Live Terminal</h2>
-                    <div class="terminal-window" id="terminal-logs">
-                        <p class="log-line">Aguardando inicialização...</p>
-                    </div>
-                </div>
+
             </div>
 
             <!-- Aba: Posições -->
@@ -199,6 +197,14 @@
                         </table>
                     </div>
                 </div>
+
+                <!-- Terminal de Logs -->
+                <div class="glass-card terminal-card" style="margin-top: 1.5rem;">
+                    <h2>Live Terminal</h2>
+                    <div class="terminal-window" id="terminal-logs">
+                        <p class="log-line">Aguardando inicialização...</p>
+                    </div>
+                </div>
             </div>
             <!-- Aba: Histórico -->
             <div id="tab-history" class="tab-content">
@@ -213,6 +219,7 @@
                                 <tr>
                                     <th>Data/Hora</th>
                                     <th>Estratégia</th>
+                                    <th>Tipo</th>
                                     <th>Moeda</th>
                                     <th>Direção</th>
                                     <th>Preço</th>
@@ -221,7 +228,7 @@
                                 </tr>
                             </thead>
                             <tbody id="history-body">
-                                <tr><td colspan="7" style="text-align:center;">Nenhum histórico encontrado.</td></tr>
+                                <tr><td colspan="8" style="text-align:center;">Nenhum histórico encontrado.</td></tr>
                             </tbody>
                         </table>
                     </div>

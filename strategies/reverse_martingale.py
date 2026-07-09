@@ -89,8 +89,8 @@ def run_reverse_martingale(exchange, symbol='BTC/USDT:USDT', leverage=100, check
     for sym in symbols_to_scan:
         set_margin_leverage(exchange, sym, leverage)
     
-    # [MELHORIA #4] Mão ajustada ao saldo real (nunca mais que 80% da margem)
-    base_trade_amount = min(1.0, collateral_usd * 0.80)
+    # [MELHORIA #4] Mão ajustada ao saldo real (mínimo $2.00 para lucro real)
+    base_trade_amount = max(2.0, collateral_usd * 0.20)
     current_trade_amount = base_trade_amount
     in_position = False
     active_symbol = None
@@ -110,7 +110,7 @@ def run_reverse_martingale(exchange, symbol='BTC/USDT:USDT', leverage=100, check
     daily_target_usd = starting_balance * (1 + daily_target_pct)
     add_log(f"🎯 Meta diária: ${daily_target_usd:.2f} (+{daily_target_pct*100:.0f}% sobre ${starting_balance:.2f})")
     add_log(f"🧠 Filtros Ativos: EMA 200 + MACD Confirmation | TF: 5m")
-    add_log(f"🃏 Mão inicial: ${base_trade_amount:.2f} (80% da margem, máx $1.00)")
+    add_log(f"🃏 Mão inicial: ${base_trade_amount:.2f} (20% da margem)")
     
     try:
         while bot_state["is_running"]:

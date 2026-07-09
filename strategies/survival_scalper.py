@@ -144,7 +144,8 @@ def run_survival_scalper(exchange, symbol='MULTI'):
                 time.sleep(2)
                 continue
                 
-            trade_amount = min(5.0, collateral_usd * 0.60)
+            risk_pct = config.get('risk_per_trade', 0.20)
+            trade_amount = max(2.0, collateral_usd * risk_pct)
             
             if len(active_positions) < MAX_POSITIONS and trade_amount < 0.10:
                 add_log(f"⚠️ Mão muito pequena (${trade_amount:.2f}). Aguardando...")
@@ -163,23 +164,24 @@ def run_survival_scalper(exchange, symbol='MULTI'):
                 current_open_symbols = set()
                 
                 for pos in all_positions:
-                    contracts = float(pos.get('contracts', 0))
+                    contracts = float(pos.get('contracts') or 0)
                     if contracts > 0:
                         sym = pos['symbol']
                         current_open_symbols.add(sym)
                         
+                        entry_p = float(pos.get('entryPrice') or 0)
                         if sym not in active_positions:
-                            active_positions[sym] = {'side': pos['side'].upper(), 'entry_price': float(pos['entryPrice'])}
-                            log_trade(sym, 'ENTRADA', pos['side'].upper(), float(pos['entryPrice']), 0, trade_amount, leverage, 0, 0, collateral_usd, '✅ Detectada')
+                            active_positions[sym] = {'side': pos['side'].upper(), 'entry_price': entry_p}
+                            log_trade(sym, 'ENTRADA', pos['side'].upper(), entry_p, 0, trade_amount, leverage, 0, 0, collateral_usd, '✅ Detectada')
                             
-                        unrealized_pnl = float(pos.get('unrealizedPnl', 0))
+                        unrealized_pnl = float(pos.get('unrealizedPnl') or 0)
                         liq_price = pos.get('liquidationPrice')
                         roi = pos.get('percentage')
                         margin = pos.get('initialMargin')
                         
-                        liq_str = f" | Liq: ${float(liq_price):,.2f}" if liq_price else ""
-                        roi_str = f" | ROI: {float(roi):+.2f}%" if roi is not None else ""
-                        marg_str = f" | Margem: ${float(margin):.2f}" if margin else ""
+                        liq_str = f" | Liq: ${float(liq_price or 0):,.2f}" if liq_price else ""
+                        roi_str = f" | ROI: {float(roi or 0):+.2f}%" if roi is not None else ""
+                        marg_str = f" | Margem: ${float(margin or 0):.2f}" if margin else ""
                         
                         add_log(f"📊 {sym} {pos['side'].upper()} Aberto:")
                         add_log(f"  💰 Qtd: {contracts}{marg_str}{liq_str}")
