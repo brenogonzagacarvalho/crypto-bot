@@ -69,6 +69,14 @@ function updateUI(data) {
     document.getElementById('coin-balance').textContent = parseFloat(data.coin_balance || 0).toFixed(8);
     document.getElementById('usdt-balance').textContent = parseFloat(data.usdt_balance || 0).toFixed(2);
 
+    // Atualiza Saldos de Financiamento na Tela Principal
+    if (data.funding_usdt !== undefined) {
+        document.getElementById('funding-usdt-balance').textContent = parseFloat(data.funding_usdt || 0).toFixed(2);
+    }
+    if (data.funding_btc !== undefined) {
+        document.getElementById('funding-btc-balance').textContent = parseFloat(data.funding_btc || 0).toFixed(8);
+    }
+
     // Atualiza Mercado
     const priceEl = document.getElementById('current-price');
     // Efeito de piscar se mudar
@@ -181,6 +189,8 @@ function switchTab(tabId) {
     
     if (tabId === 'history') {
         fetchHistory();
+    } else if (tabId === 'earn') {
+        fetchEarnData();
     }
 }
 
@@ -288,5 +298,302 @@ async function fetchHistory() {
         }
     } catch (error) {
         console.error("Erro ao buscar histórico:", error);
+    }
+}
+
+// --- BYBIT EARN LOGIC ---
+let earnData = {
+    unified: {},
+    funding: {},
+    opportunities: [],
+    investments: []
+};
+let earnYieldInterval;
+
+async function fetchEarnData() {
+    try {
+        // 1. Saldos de Unified e Funding
+        const resBal = await fetch('/api/earn/balances');
+        const dataBal = await resBal.json();
+        if (dataBal.status === 'ok') {
+            earnData.unified = dataBal.unified;
+            earnData.funding = dataBal.funding;
+            updateEarnBalancesUI();
+        }
+
+        // 2. Oportunidades
+        const resOpp = await fetch('/api/earn/opportunities');
+        const dataOpp = await resOpp.json();
+        if (dataOpp.status === 'ok') {
+            earnData.opportunities = dataOpp.opportunities;
+            renderEarnOpportunities();
+        }
+
+        // 3. Investimentos ativos
+        await fetchActiveInvestments();
+    } catch (err) {
+        console.error("Erro ao buscar dados do Bybit Earn:", err);
+    }
+}
+
+function updateEarnBalancesUI() {
+    // Atualiza saldos da UTA
+    document.getElementById('earn-unified-usdt').textContent = parseFloat(earnData.unified.USDT || 0).toFixed(2);
+    document.getElementById('earn-unified-btc').textContent = parseFloat(earnData.unified.BTC || 0).toFixed(8);
+    document.getElementById('earn-unified-eth').textContent = parseFloat(earnData.unified.ETH || 0).toFixed(8);
+    document.getElementById('earn-unified-sol').textContent = parseFloat(earnData.unified.SOL || 0).toFixed(8);
+
+    // Atualiza saldos de Financiamento
+    document.getElementById('earn-funding-usdt').textContent = parseFloat(earnData.funding.USDT || 0).toFixed(2);
+    document.getElementById('earn-funding-btc').textContent = parseFloat(earnData.funding.BTC || 0).toFixed(8);
+    document.getElementById('earn-funding-eth').textContent = parseFloat(earnData.funding.ETH || 0).toFixed(8);
+    document.getElementById('earn-funding-sol').textContent = parseFloat(earnData.funding.SOL || 0).toFixed(8);
+}
+
+function renderEarnOpportunities(filterCoin = '') {
+    const body = document.getElementById('earn-opportunities-body');
+    body.innerHTML = '';
+    
+    const filtered = earnData.opportunities.filter(opp => {
+        if (!filterCoin) return true;
+        return opp.coin.toLowerCase().includes(filterCoin.toLowerCase());
+    });
+
+    if (filtered.length === 0) {
+        body.innerHTML = `<tr><td colspan="6" style="text-align:center;">Nenhum produto encontrado.</td></tr>`;
+        return;
+    }
+
+    filtered.forEach(opp => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td><strong>${opp.name}</strong></td>
+            <td><span class="badge" style="border-color: #14b8a6; color: #14b8a6;">${opp.coin}</span></td>
+            <td><strong style="color: var(--crypto-green); font-size: 1.1rem;">${opp.apy.toFixed(1)}% a.a.</strong></td>
+            <td><span style="color: var(--text-secondary);">${opp.type}</span></td>
+            <td>${opp.min_invest} ${opp.coin}</td>
+            <td>
+                <button class="btn btn-primary" style="background-color: #14b8a6; border-color: #14b8a6; padding: 0.4rem 1rem; font-size: 0.85rem;" onclick="investEarn('${opp.id}', '${opp.name}', '${opp.coin}', ${opp.apy}, ${opp.min_invest})">Investir</button>
+            </td>
+        `;
+        body.appendChild(tr);
+    });
+}
+
+function filterEarnProducts() {
+    const val = document.getElementById('earn-search').value;
+    renderEarnOpportunities(val);
+}
+
+async function fetchActiveInvestments() {
+    try {
+        const res = await fetch('/api/earn/investments');
+        const data = await res.json();
+        if (data.status === 'ok') {
+            earnData.investments = data.investments;
+            renderActiveInvestments();
+            
+            // Inicia o atualizador de rendimento em tempo real ao segundo
+            if (earnYieldInterval) clearInterval(earnYieldInterval);
+            if (earnData.investments.length > 0) {
+                earnYieldInterval = setInterval(updateYieldsRealtime, 1000);
+            }
+        }
+    } catch (err) {
+        console.error("Erro ao carregar investimentos:", err);
+    }
+}
+
+function renderActiveInvestments() {
+    const body = document.getElementById('active-earn-body');
+    body.innerHTML = '';
+
+    if (earnData.investments.length === 0) {
+        body.innerHTML = '<tr><td colspan="6" style="text-align:center; padding: 1.5rem;">Nenhum investimento ativo no momento.</td></tr>';
+        return;
+    }
+
+    earnData.investments.forEach(inv => {
+        const tr = document.createElement('tr');
+        tr.id = `inv-row-${inv.id}`;
+        
+        // Determina formato decimal
+        const decimals = inv.coin === 'USDT' || inv.coin === 'USDC' ? 4 : 8;
+        
+        tr.innerHTML = `
+            <td>
+                <strong>${inv.product_name}</strong><br>
+                <span style="font-size:0.75rem; color:var(--text-secondary)">Moeda: ${inv.coin}</span>
+            </td>
+            <td><strong>${parseFloat(inv.amount).toFixed(decimals)} ${inv.coin}</strong></td>
+            <td><strong style="color:var(--crypto-green)">${parseFloat(inv.apy).toFixed(1)}% APY</strong></td>
+            <td><span style="font-size:0.85rem;">${inv.date}</span></td>
+            <td><strong style="color: var(--crypto-green);" id="yield-display-${inv.id}">Calculating...</strong></td>
+            <td>
+                <button class="btn btn-danger" style="padding:0.4rem 0.8rem; font-size:0.8rem;" onclick="redeemEarn('${inv.id}')">Resgatar</button>
+            </td>
+        `;
+        body.appendChild(tr);
+    });
+    
+    // Atualiza imediatamente
+    updateYieldsRealtime();
+}
+
+function updateYieldsRealtime() {
+    const now = Math.floor(Date.now() / 1000);
+    earnData.investments.forEach(inv => {
+        const el = document.getElementById(`yield-display-${inv.id}`);
+        if (!el) return;
+
+        const secondsElapsed = Math.max(0, now - inv.timestamp);
+        // APY dividido por 100, e pelo total de segundos num ano (365 dias)
+        const secondsInYear = 365 * 24 * 60 * 60;
+        const interestRatePerSecond = (inv.apy / 100) / secondsInYear;
+        const interestEarned = inv.amount * interestRatePerSecond * secondsElapsed;
+
+        const decimals = inv.coin === 'USDT' || inv.coin === 'USDC' ? 8 : 12;
+        el.textContent = `+${interestEarned.toFixed(decimals)} ${inv.coin}`;
+    });
+}
+
+function setTransferMax() {
+    const coin = document.getElementById('transfer-coin').value;
+    const direction = document.getElementById('transfer-direction').value;
+    let maxVal = 0;
+
+    if (direction === 'UNIFIED_TO_FUNDING') {
+        maxVal = earnData.unified[coin] || 0;
+    } else {
+        maxVal = earnData.funding[coin] || 0;
+    }
+
+    document.getElementById('transfer-amount').value = maxVal;
+}
+
+async function submitTransfer() {
+    const coin = document.getElementById('transfer-coin').value;
+    const direction = document.getElementById('transfer-direction').value;
+    const amount = parseFloat(document.getElementById('transfer-amount').value);
+
+    if (isNaN(amount) || amount <= 0) {
+        alert("Por favor, informe um valor válido maior que zero.");
+        return;
+    }
+
+    try {
+        const res = await fetch('/api/earn/transfer', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ coin, direction, amount })
+        });
+        const data = await res.json();
+        if (data.error) {
+            alert("Falha na transferência:\n" + data.error);
+        } else {
+            alert(data.message);
+            document.getElementById('transfer-amount').value = '';
+            fetchEarnData();
+        }
+    } catch (err) {
+        console.error("Erro na transferência:", err);
+        alert("Erro de conexão ao efetuar transferência.");
+    }
+}
+
+async function investEarn(productId, productName, coin, apy, minInvest) {
+    const available = earnData.unified[coin] || 0;
+    
+    const amountStr = prompt(
+        `Investir em: ${productName} (${coin})\n` +
+        `APY: ${apy}% ao ano\n` +
+        `Saldo disponível para Trade (UTA): ${available} ${coin}\n` +
+        `Mínimo de investimento: ${minInvest} ${coin}\n\n` +
+        `Informe o valor que deseja transferir e alocar:`
+    );
+
+    if (amountStr === null) return;
+    const amount = parseFloat(amountStr);
+
+    if (isNaN(amount) || amount <= 0) {
+        alert("Valor inválido.");
+        return;
+    }
+
+    if (amount < minInvest) {
+        alert(`O valor mínimo para este produto é ${minInvest} ${coin}.`);
+        return;
+    }
+
+    if (amount > available) {
+        alert(`Saldo insuficiente. Você tem apenas ${available} ${coin} disponível.`);
+        return;
+    }
+
+    try {
+        const res = await fetch('/api/earn/invest', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                product_id: productId,
+                product_name: productName,
+                coin: coin,
+                amount: amount,
+                apy: apy
+            })
+        });
+        const data = await res.json();
+        if (data.error) {
+            alert("Erro ao investir:\n" + data.error);
+        } else {
+            alert(data.message);
+            fetchEarnData();
+        }
+    } catch (err) {
+        console.error("Erro no investimento:", err);
+        alert("Erro de rede ao investir.");
+    }
+}
+
+async function redeemEarn(investmentId) {
+    if (!confirm("Confirmar resgate deste investimento? O valor alocado será transferido de volta para a sua conta de Trade (UTA).")) return;
+
+    try {
+        const res = await fetch('/api/earn/redeem', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: investmentId })
+        });
+        const data = await res.json();
+        if (data.error) {
+            alert("Erro ao resgatar:\n" + data.error);
+        } else {
+            alert(data.message);
+            fetchEarnData();
+        }
+    } catch (err) {
+        console.error("Erro no resgate:", err);
+        alert("Erro de rede ao resgatar.");
+    }
+}
+
+async function startAutoEarn() {
+    if (!confirm("Você deseja que o bot identifique as moedas com saldo disponível na sua conta de Negociação (UTA) e as aloque automaticamente no Bybit Earn?")) return;
+
+    try {
+        const res = await fetch('/api/earn/auto-invest', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await res.json();
+        if (data.error) {
+            alert("Erro no Auto-Invest:\n" + data.error);
+        } else {
+            alert(data.message);
+            fetchEarnData();
+        }
+    } catch (err) {
+        console.error("Erro no Auto-Invest:", err);
+        alert("Erro de rede ao auto-investir.");
     }
 }

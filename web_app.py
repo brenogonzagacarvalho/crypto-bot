@@ -1,4 +1,14 @@
 import os
+import sys
+import io
+
+# Força UTF-8 globalmente (evita crash com emojis no Windows)
+os.environ.setdefault('PYTHONUTF8', '1')
+if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+if sys.stderr.encoding and sys.stderr.encoding.lower() != 'utf-8':
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
 import threading
 from flask import Flask, render_template, jsonify, request
 from core.connection import get_exchange, check_connection
@@ -50,8 +60,67 @@ def init_exchange():
 def index():
     return render_template('index.html')
 
+last_balance_update = 0
+
 @app.route('/api/status')
 def status():
+    global exchange, last_balance_update
+    import time
+    now = time.time()
+    
+    if now - last_balance_update > 10:
+        last_balance_update = now
+        if not exchange:
+            try:
+                exchange = get_exchange()
+            except:
+                pass
+        if exchange:
+            try:
+                # 1. Busca saldo UTA
+                resp = exchange.privateGetV5AccountWalletBalance({'accountType': 'UNIFIED'})
+                account_data = resp.get('result', {}).get('list', [{}])[0]
+                bot_state["usdt_balance"] = float(account_data.get('totalEquity', 0))
+                
+                btc_found = False
+                for c in account_data.get('coin', []):
+                    if c.get('coin') == 'BTC':
+                        bot_state["coin_balance"] = float(c.get('walletBalance') or 0)
+                        bot_state["coin_name"] = "BTC"
+                        btc_found = True
+                if not btc_found:
+                    bot_state["coin_balance"] = 0.0
+                    bot_state["coin_name"] = "BTC"
+                    
+                # 2. Busca saldos de Funding para o dashboard
+                funding_usdt = 0.0
+                funding_btc = 0.0
+                try:
+                    raw_funding = exchange.fetch_balance({'type': 'funding'})
+                    funding_usdt = float(raw_funding.get('total', {}).get('USDT', 0))
+                    funding_btc = float(raw_funding.get('total', {}).get('BTC', 0))
+                except:
+                    try:
+                        resp_fund = exchange.privateGetV5AssetTransferQueryAccountCoinsBalance({
+                            'accountType': 'FUNDING',
+                            'coin': 'USDT,BTC'
+                        })
+                        for c_data in resp_fund.get('result', {}).get('balance', []):
+                            c_name = c_data.get('coin')
+                            c_bal = float(c_data.get('walletBalance') or 0)
+                            if c_name == 'USDT':
+                                funding_usdt = c_bal
+                            elif c_name == 'BTC':
+                                funding_btc = c_bal
+                    except:
+                        pass
+                
+                bot_state["funding_usdt"] = funding_usdt
+                bot_state["funding_btc"] = funding_btc
+                
+            except Exception as e:
+                print(f"Erro ao atualizar saldos em background: {e}")
+                
     return jsonify(bot_state)
 
 @app.route('/api/balance')
@@ -147,6 +216,372 @@ def close_all():
                 add_log(f"MANUAL: Posição {p['symbol']} fechada via Dashboard.")
                 closed += 1
         return jsonify({"message": f"{closed} posições fechadas com sucesso.", "status": "ok"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/earn/balances')
+def get_earn_balances():
+    global exchange
+    if not exchange:
+        exchange = get_exchange()
+    try:
+        import json
+        
+        # 1. Busca saldo da conta Unificada (UTA)
+        resp_unified = exchange.privateGetV5AccountWalletBalance({'accountType': 'UNIFIED'})
+        account_unified = resp_unified.get('result', {}).get('list', [{}])[0]
+        unified_total = float(account_unified.get('totalEquity', 0))
+        
+        unified_details = {'USDT': unified_total}
+        for coin_info in account_unified.get('coin', []):
+            coin_name = coin_info.get('coin')
+            coin_bal = float(coin_info.get('walletBalance') or 0)
+            if coin_bal > 0:
+                unified_details[coin_name] = coin_bal
+                
+        # 2. Busca saldo da conta de Financiamento (Funding)
+        funding_balance = {}
+        try:
+            raw_funding = exchange.fetch_balance({'type': 'funding'})
+            for coin, balance_info in raw_funding.get('total', {}).items():
+                if balance_info > 0:
+                    funding_balance[coin] = balance_info
+        except Exception as fe:
+            print(f"Erro ao obter saldo funding via fetch_balance: {fe}")
+            try:
+                resp_fund = exchange.privateGetV5AssetTransferQueryAccountCoinsBalance({
+                    'accountType': 'FUNDING',
+                    'coin': 'USDT,BTC,ETH,SOL'
+                })
+                for c_data in resp_fund.get('result', {}).get('balance', []):
+                    c_name = c_data.get('coin')
+                    c_bal = float(c_data.get('walletBalance') or 0)
+                    if c_bal > 0:
+                        funding_balance[c_name] = c_bal
+            except Exception as fe2:
+                print(f"Erro ao obter saldo funding via implicit API: {fe2}")
+                funding_balance = {'USDT': 0.0, 'BTC': 0.0, 'ETH': 0.0, 'SOL': 0.0}
+
+        for c in ['USDT', 'BTC', 'ETH', 'SOL']:
+            if c not in unified_details:
+                unified_details[c] = 0.0
+            if c not in funding_balance:
+                funding_balance[c] = 0.0
+
+        return jsonify({
+            "unified": unified_details,
+            "funding": funding_balance,
+            "status": "ok"
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/earn/transfer', methods=['POST'])
+def execute_earn_transfer():
+    global exchange
+    if not exchange:
+        exchange = get_exchange()
+    try:
+        data = request.json or {}
+        coin = data.get('coin', 'USDT').upper()
+        amount = float(data.get('amount', 0))
+        direction = data.get('direction')
+        
+        if amount <= 0:
+            return jsonify({"error": "Quantidade inválida"}), 400
+            
+        if direction == 'UNIFIED_TO_FUNDING':
+            from_acc = 'unified'
+            to_acc = 'funding'
+            dir_text = "UTA ➡️ Financiamento"
+        elif direction == 'FUNDING_TO_UNIFIED':
+            from_acc = 'funding'
+            to_acc = 'unified'
+            dir_text = "Financiamento ➡️ UTA"
+        else:
+            return jsonify({"error": "Direção de transferência inválida"}), 400
+            
+        add_log(f"Iniciando transferência de {amount} {coin} ({dir_text})...")
+        
+        transfer_res = exchange.transfer(coin, amount, from_acc, to_acc)
+        transfer_id = transfer_res.get('id') or 'N/A'
+        add_log(f"Sucesso! Transferidos {amount} {coin} ({dir_text}). ID: {transfer_id}")
+        
+        return jsonify({"message": f"Transferência de {amount} {coin} concluída!", "status": "ok", "result": transfer_res})
+    except Exception as e:
+        err_msg = str(e)
+        add_log(f"[ERRO] Falha na transferência: {err_msg}")
+        return jsonify({"error": err_msg}), 500
+
+@app.route('/api/earn/opportunities')
+def get_earn_opportunities():
+    opportunities = [
+        {"id": "flexible_usdt", "name": "Flexible Savings (Poupança Flexível)", "coin": "USDT", "apy": 11.5, "type": "Flexível", "min_invest": 0.1},
+        {"id": "flexible_usdc", "name": "Flexible Savings (Poupança Flexível)", "coin": "USDC", "apy": 8.5, "type": "Flexível", "min_invest": 0.1},
+        {"id": "flexible_btc", "name": "Flexible Savings (Poupança Flexível)", "coin": "BTC", "apy": 1.5, "type": "Flexível", "min_invest": 0.0001},
+        {"id": "flexible_eth", "name": "Flexible Savings (Poupança Flexível)", "coin": "ETH", "apy": 2.2, "type": "Flexível", "min_invest": 0.001},
+        {"id": "flexible_sol", "name": "Flexible Savings (Poupança Flexível)", "coin": "SOL", "apy": 4.5, "type": "Flexível", "min_invest": 0.01},
+        {"id": "dual_btc_1d", "name": "Dual Asset BTC/USDT (1 Dia)", "coin": "BTC", "apy": 120.0, "type": "Dual Asset", "min_invest": 0.005},
+        {"id": "dual_eth_1d", "name": "Dual Asset ETH/USDT (1 Dia)", "coin": "ETH", "apy": 135.0, "type": "Dual Asset", "min_invest": 0.05},
+    ]
+    return jsonify({"opportunities": opportunities, "status": "ok"})
+
+@app.route('/api/earn/investments')
+def get_earn_investments():
+    try:
+        import json
+        file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config', 'earn_investments.json')
+        if not os.path.exists(file_path):
+            return jsonify({"investments": [], "status": "ok"})
+        with open(file_path, 'r', encoding='utf-8') as f:
+            investments = json.load(f)
+        return jsonify({"investments": investments, "status": "ok"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/earn/invest', methods=['POST'])
+def invest_earn():
+    global exchange
+    if not exchange:
+        exchange = get_exchange()
+    try:
+        import json
+        import uuid
+        data = request.json or {}
+        product_id = data.get('product_id')
+        product_name = data.get('product_name')
+        coin = data.get('coin', 'USDT').upper()
+        amount = float(data.get('amount', 0))
+        apy = float(data.get('apy', 0))
+        
+        if amount <= 0:
+            return jsonify({"error": "Quantidade inválida"}), 400
+            
+        add_log(f"Iniciando alocação em Earn: {amount} {coin} no {product_name}...")
+        
+        try:
+            transfer_res = exchange.transfer(coin, amount, 'unified', 'funding')
+            add_log(f"Transferido {amount} {coin} para carteira de Financiamento (Earn).")
+        except Exception as te:
+            add_log(f"[ERRO] Falha ao transferir fundos para Earn: {te}")
+            return jsonify({"error": f"Erro de transferência Bybit: {te}"}), 500
+            
+        file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config', 'earn_investments.json')
+        investments = []
+        if os.path.exists(file_path):
+            with open(file_path, 'r', encoding='utf-8') as f:
+                investments = json.load(f)
+                
+        new_inv = {
+            "id": str(uuid.uuid4()),
+            "product_id": product_id,
+            "product_name": product_name,
+            "coin": coin,
+            "amount": amount,
+            "apy": apy,
+            "timestamp": int(time.time()),
+            "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        investments.append(new_inv)
+        
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(investments, f, indent=2, ensure_ascii=False)
+            
+        add_log(f"[SUCESSO] Investido {amount} {coin} em {product_name}!")
+        
+        return jsonify({"message": f"Investimento de {amount} {coin} realizado!", "status": "ok", "investment": new_inv})
+    except Exception as e:
+        err_msg = str(e)
+        add_log(f"[ERRO FATAL] Falha ao investir: {err_msg}")
+        return jsonify({"error": err_msg}), 500
+
+@app.route('/api/earn/redeem', methods=['POST'])
+def redeem_earn():
+    global exchange
+    if not exchange:
+        exchange = get_exchange()
+    try:
+        import json
+        data = request.json or {}
+        investment_id = data.get('id')
+        
+        file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config', 'earn_investments.json')
+        if not os.path.exists(file_path):
+            return jsonify({"error": "Investimento não encontrado"}), 404
+            
+        with open(file_path, 'r', encoding='utf-8') as f:
+            investments = json.load(f)
+            
+        target_inv = None
+        for inv in investments:
+            if inv['id'] == investment_id:
+                target_inv = inv
+                break
+                
+        if not target_inv:
+            return jsonify({"error": "Investimento não localizado"}), 404
+            
+        coin = target_inv['coin']
+        amount = target_inv['amount']
+        product_name = target_inv['product_name']
+        
+        add_log(f"Iniciando resgate de {amount} {coin} de {product_name}...")
+        
+        try:
+            transfer_res = exchange.transfer(coin, amount, 'funding', 'unified')
+            add_log(f"Transferido {amount} {coin} de volta para a carteira de Trade (UTA).")
+        except Exception as te:
+            add_log(f"[ERRO] Falha ao transferir fundos de volta: {te}")
+            return jsonify({"error": f"Erro de transferência Bybit: {te}"}), 500
+            
+        investments = [inv for inv in investments if inv['id'] != investment_id]
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(investments, f, indent=2, ensure_ascii=False)
+            
+        add_log(f"[SUCESSO] Resgatado {amount} {coin} com sucesso!")
+        
+        return jsonify({"message": f"Resgate de {amount} {coin} concluído com sucesso!", "status": "ok"})
+    except Exception as e:
+        err_msg = str(e)
+        add_log(f"[ERRO FATAL] Falha ao resgatar: {err_msg}")
+        return jsonify({"error": err_msg}), 500
+
+@app.route('/api/earn/auto-invest', methods=['POST'])
+def auto_invest_earn():
+    global exchange
+    if not exchange:
+        exchange = get_exchange()
+    try:
+        import json
+        import uuid
+        import time
+        
+        # 1. Tenta consolidar BRL se houver no Funding (move para UTA para trading)
+        funding_brl = 0.0
+        try:
+            raw_funding = exchange.fetch_balance({'type': 'funding'})
+            funding_brl = float(raw_funding.get('total', {}).get('BRL', 0))
+        except:
+            try:
+                resp_fund = exchange.privateGetV5AssetTransferQueryAccountCoinsBalance({
+                    'accountType': 'FUNDING',
+                    'coin': 'BRL'
+                })
+                for c_data in resp_fund.get('result', {}).get('balance', []):
+                    if c_data.get('coin') == 'BRL':
+                        funding_brl = float(c_data.get('walletBalance') or 0)
+            except:
+                pass
+                
+        if funding_brl >= 5.0:
+            add_log(f"[AUTO-INVEST] Identificado {funding_brl:.2f} BRL em Financiamento. Transferindo para Trade (UTA) para converter...")
+            try:
+                exchange.transfer('BRL', funding_brl, 'funding', 'unified')
+                time.sleep(1.5)
+            except Exception as e:
+                add_log(f"[AUTO-INVEST AVISO] Não foi possível transferir BRL para UTA: {e}")
+                
+        # 2. Busca saldos iniciais na UTA
+        resp_unified = exchange.privateGetV5AccountWalletBalance({'accountType': 'UNIFIED'})
+        account_unified = resp_unified.get('result', {}).get('list', [{}])[0]
+        
+        unified_balances = {}
+        for coin_info in account_unified.get('coin', []):
+            coin_name = coin_info.get('coin')
+            coin_bal = float(coin_info.get('walletBalance') or 0)
+            if coin_bal > 0:
+                unified_balances[coin_name] = coin_bal
+                
+        # 3. Se houver BRL >= 5.0 na UTA, converte automaticamente para USDT
+        unified_brl = unified_balances.get('BRL', 0.0)
+        if unified_brl >= 5.0:
+            try:
+                add_log(f"[AUTO-INVEST] Conversão automática ativa: Convertendo {unified_brl:.2f} BRL para USDT...")
+                ticker = exchange.fetch_ticker('USDT/BRL')
+                price = float(ticker['last'])
+                amount_usdt = (unified_brl / price) * 0.985 # 1.5% margem de segurança para variação do book e taxas
+                amount_precision = float(exchange.amount_to_precision('USDT/BRL', amount_usdt))
+                
+                if amount_precision > 0:
+                    add_log(f"[AUTO-INVEST] Enviando ordem de mercado de compra: {amount_precision:.2f} USDT/BRL (Preço: {price:.4f})...")
+                    order = exchange.create_order('USDT/BRL', 'market', 'buy', amount_precision)
+                    add_log(f"[AUTO-INVEST] Conversão concluída! Comprados {amount_precision:.2f} USDT.")
+                    time.sleep(2.0) # Espera sincronizar saldos
+                    
+                    # Atualiza novamente os saldos da UTA pós-conversão
+                    resp_unified = exchange.privateGetV5AccountWalletBalance({'accountType': 'UNIFIED'})
+                    account_unified = resp_unified.get('result', {}).get('list', [{}])[0]
+                    unified_balances = {}
+                    for coin_info in account_unified.get('coin', []):
+                        coin_name = coin_info.get('coin')
+                        coin_bal = float(coin_info.get('walletBalance') or 0)
+                        if coin_bal > 0:
+                            unified_balances[coin_name] = coin_bal
+            except Exception as e:
+                add_log(f"[AUTO-INVEST ERRO] Falha ao converter BRL para USDT: {e}")
+
+        # 4. Lista de oportunidades de Earn com limites
+        opps = {
+            "USDT": {"id": "flexible_usdt", "name": "Flexible Savings (Poupança Flexível)", "apy": 11.5, "min_invest": 0.1},
+            "USDC": {"id": "flexible_usdc", "name": "Flexible Savings (Poupança Flexível)", "apy": 8.5, "min_invest": 0.1},
+            "BTC": {"id": "flexible_btc", "name": "Flexible Savings (Poupança Flexível)", "apy": 1.5, "min_invest": 0.0001},
+            "ETH": {"id": "flexible_eth", "name": "Flexible Savings (Poupança Flexível)", "apy": 2.2, "min_invest": 0.001},
+            "SOL": {"id": "flexible_sol", "name": "Flexible Savings (Poupança Flexível)", "apy": 4.5, "min_invest": 0.01}
+        }
+        
+        invested_list = []
+        errors_list = []
+        
+        add_log("[AUTO-INVEST] Analisando saldos elegíveis para investimento automático...")
+        
+        file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config', 'earn_investments.json')
+        investments = []
+        if os.path.exists(file_path):
+            with open(file_path, 'r', encoding='utf-8') as f:
+                investments = json.load(f)
+                
+        # 5. Varre os saldos disponíveis e investe
+        for coin, balance in unified_balances.items():
+            if coin in opps:
+                opp = opps[coin]
+                if balance >= opp["min_invest"]:
+                    add_log(f"[AUTO-INVEST] Identificado saldo de {balance:.8f} {coin} na UTA. Alocando automático...")
+                    try:
+                        transfer_res = exchange.transfer(coin, balance, 'unified', 'funding')
+                        add_log(f"[AUTO-INVEST] Sucesso! Transferidos {balance:.8f} {coin} para carteira de Financiamento.")
+                        
+                        new_inv = {
+                            "id": str(uuid.uuid4()),
+                            "product_id": opp["id"],
+                            "product_name": opp["name"],
+                            "coin": coin,
+                            "amount": balance,
+                            "apy": opp["apy"],
+                            "timestamp": int(time.time()),
+                            "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        }
+                        investments.append(new_inv)
+                        invested_list.append(f"{balance:.6f} {coin}")
+                    except Exception as te:
+                        err_msg = f"Falha na transferência de {coin}: {te}"
+                        add_log(f"[AUTO-INVEST ERRO] {err_msg}")
+                        errors_list.append(err_msg)
+                else:
+                    add_log(f"[AUTO-INVEST] Saldo de {balance:.8f} {coin} é inferior ao mínimo necessário ({opp['min_invest']} {coin}). Ignorado.")
+                    
+        if invested_list:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(investments, f, indent=2, ensure_ascii=False)
+            msg = f"Investimento automático concluído para: {', '.join(invested_list)}."
+        else:
+            msg = "Nenhum saldo elegível de cripto/fiat encontrado para investimento automático."
+            
+        return jsonify({
+            "status": "ok",
+            "message": msg,
+            "invested": invested_list,
+            "errors": errors_list
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

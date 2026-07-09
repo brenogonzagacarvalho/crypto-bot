@@ -19,6 +19,7 @@
                     <button id="tab-btn-dashboard" class="tab-btn active" onclick="switchTab('dashboard')">Dashboard</button>
                     <button id="tab-btn-positions" class="tab-btn" onclick="switchTab('positions')">Posições Abertas <span id="pos-count" class="mini-badge">0</span></button>
                     <button id="tab-btn-history" class="tab-btn" onclick="switchTab('history')">Histórico</button>
+                    <button id="tab-btn-earn" class="tab-btn" onclick="switchTab('earn')">Bybit Earn 💰</button>
                 </nav>
             </div>
             <div id="status-badge" class="badge">🔴 Desligado</div>
@@ -31,36 +32,98 @@
                     <!-- Card de Saldo -->
                     <div class="glass-card balance-card">
                         <h2>Carteira (Bybit)</h2>
-                        <div class="balance-item">
-                            <span class="label" id="coin-label">Moeda Base</span>
-                            <span class="value" id="coin-balance">0.00000000</span>
-                        </div>
-                        <div class="balance-item">
-                            <span class="label">Dólar (USDT)</span>
-                            <span class="value" id="usdt-balance">0.00</span>
+                        
+                        <div style="display: flex; flex-direction: column; gap: 0.8rem;">
+                            <!-- Conta Unificada -->
+                            <div>
+                                <h3 style="font-size: 0.75rem; color: var(--crypto-green); margin-bottom: 0.4rem; text-transform: uppercase; letter-spacing: 0.5px;">Negociação Unificada (UTA)</h3>
+                                <div class="balance-item">
+                                    <span class="label">Total Equidade (USD)</span>
+                                    <span class="value" id="usdt-balance" style="font-weight: 800; font-size: 1.1rem; color: #fff;">0.00</span>
+                                </div>
+                                <div class="balance-item" style="font-size: 0.85rem; opacity: 0.8;">
+                                    <span class="label" id="coin-label">Moeda Base</span>
+                                    <span class="value" id="coin-balance">0.00000000</span>
+                                </div>
+                            </div>
+                            
+                            <hr style="border: 0; border-top: 1px solid rgba(255,255,255,0.05); margin: 0.1rem 0;">
+                            
+                            <!-- Conta de Financiamento -->
+                            <div>
+                                <h3 style="font-size: 0.75rem; color: #14b8a6; margin-bottom: 0.4rem; text-transform: uppercase; letter-spacing: 0.5px;">Financiamento & Poupança</h3>
+                                <div class="balance-item" style="font-size: 0.85rem;">
+                                    <span class="label">Dólar (USDT)</span>
+                                    <span class="value" id="funding-usdt-balance" style="color: #fff; font-weight: 600;">0.00</span>
+                                </div>
+                                <div class="balance-item" style="font-size: 0.85rem;">
+                                    <span class="label">Bitcoin (BTC)</span>
+                                    <span class="value" id="funding-btc-balance" style="color: #fff; font-weight: 600;">0.00000000</span>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
-                    <!-- Card de Mercado -->
-                    <div class="glass-card market-card">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
-                            <h2 style="margin-bottom: 0;">Mercado</h2>
-                            <select id="coin-selector" class="coin-dropdown">
-                                <option value="BTC">Bitcoin (BTC)</option>
-                                <option value="ETH">Ethereum (ETH)</option>
-                                <option value="SOL">Solana (SOL)</option>
-                                <option value="MULTI">MULTI (BTC, ETH, SOL)</option>
-                            </select>
+                    <!-- Coluna do Meio: Mercado & Transferência -->
+                    <div style="display: flex; flex-direction: column; gap: 1.5rem; flex: 1.1;">
+                        <!-- Card de Mercado -->
+                        <div class="glass-card market-card" style="margin-bottom: 0; width: 100%;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                                <h2 style="margin-bottom: 0;">Mercado</h2>
+                                <select id="coin-selector" class="coin-dropdown">
+                                    <option value="BTC">Bitcoin (BTC)</option>
+                                    <option value="ETH">Ethereum (ETH)</option>
+                                    <option value="SOL">Solana (SOL)</option>
+                                    <option value="MULTI">MULTI (BTC, ETH, SOL)</option>
+                                </select>
+                            </div>
+                            <div class="price-display">
+                                <span class="currency">$</span>
+                                <span id="current-price">0.00</span>
+                            </div>
+                            <div class="indicator">
+                                <span class="label" id="indicator-label">RSI (14)</span>
+                                <span class="value" id="rsi-value">0.0</span>
+                            </div>
+                            <div class="indicator-status" id="rsi-status">Neutro</div>
                         </div>
-                        <div class="price-display">
-                            <span class="currency">$</span>
-                            <span id="current-price">0.00</span>
+
+                        <!-- Card de Transferência Rápida (Conversão) -->
+                        <div class="glass-card control-card" style="width: 100%; border-color: rgba(20, 184, 166, 0.4); margin-bottom: 0;">
+                            <h2>Transferência Interna</h2>
+                            <p class="subtitle">Mover fundos instantaneamente sem taxas</p>
+                            
+                            <div style="display: flex; flex-direction: column; gap: 0.8rem; margin-top: 1rem;">
+                                <div style="display: flex; gap: 1rem;">
+                                    <div style="flex: 1;">
+                                        <label style="font-size: 0.75rem; color: var(--text-secondary); display: block; margin-bottom: 0.25rem;">Moeda</label>
+                                        <select id="transfer-coin" class="coin-dropdown" style="width: 100%; height: 38px;">
+                                            <option value="USDT">USDT (Dólar)</option>
+                                            <option value="BTC">BTC (Bitcoin)</option>
+                                            <option value="ETH">ETH (Ethereum)</option>
+                                            <option value="SOL">SOL (Solana)</option>
+                                        </select>
+                                    </div>
+                                    <div style="flex: 1.5;">
+                                        <label style="font-size: 0.75rem; color: var(--text-secondary); display: block; margin-bottom: 0.25rem;">Direção</label>
+                                        <select id="transfer-direction" class="coin-dropdown" style="width: 100%; height: 38px;">
+                                            <option value="UNIFIED_TO_FUNDING">Trade (UTA) ➡️ Financiamento</option>
+                                            <option value="FUNDING_TO_UNIFIED">Financiamento ➡️ Trade (UTA)</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                
+                                <div>
+                                    <label style="font-size: 0.75rem; color: var(--text-secondary); display: block; margin-bottom: 0.25rem;">Quantidade</label>
+                                    <div style="display: flex; gap: 0.5rem; align-items: center;">
+                                        <input type="number" id="transfer-amount" placeholder="0.00" step="any" min="0" style="flex: 1; padding: 0.5rem; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); color: #fff; border-radius: 4px; outline: none; font-family: inherit;">
+                                        <button class="btn btn-secondary" onclick="setTransferMax()" style="width: auto; padding: 0.5rem 1rem;">MÁX</button>
+                                    </div>
+                                </div>
+                                
+                                <button class="btn btn-primary" onclick="submitTransfer()" style="width: 100%; background-color: #14b8a6; border-color: #14b8a6; box-shadow: 0 0 10px rgba(20,184,166,0.3); margin-top: 0.5rem;">Confirmar Transferência</button>
+                            </div>
                         </div>
-                        <div class="indicator">
-                            <span class="label" id="indicator-label">RSI (14)</span>
-                            <span class="value" id="rsi-value">0.0</span>
-                        </div>
-                        <div class="indicator-status" id="rsi-status">Neutro</div>
                     </div>
 
                     <!-- Card de Controle -->
@@ -159,6 +222,116 @@
                             </thead>
                             <tbody id="history-body">
                                 <tr><td colspan="7" style="text-align:center;">Nenhum histórico encontrado.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Aba: Bybit Earn -->
+            <div id="tab-earn" class="tab-content">
+                <!-- Linha de Saldos da Carteira -->
+                <div class="cards-container" style="margin-bottom: 2rem;">
+                    <!-- Card Trade (UTA) -->
+                    <div class="glass-card balance-card">
+                        <h2>Negociação Unificada (UTA)</h2>
+                        <p class="subtitle">Saldo ativo usado pelo robô de Trade</p>
+                        <div class="balance-item">
+                            <span class="label">USDT</span>
+                            <span class="value" id="earn-unified-usdt">0.00</span>
+                        </div>
+                        <div class="balance-item">
+                            <span class="label">BTC</span>
+                            <span class="value" id="earn-unified-btc">0.00000000</span>
+                        </div>
+                        <div class="balance-item">
+                            <span class="label">ETH</span>
+                            <span class="value" id="earn-unified-eth">0.00000000</span>
+                        </div>
+                        <div class="balance-item">
+                            <span class="label">SOL</span>
+                            <span class="value" id="earn-unified-sol">0.00000000</span>
+                        </div>
+                    </div>
+
+                    <!-- Card Financiamento (Funding/Savings) -->
+                    <div class="glass-card balance-card" style="border-color: rgba(20, 184, 166, 0.4);">
+                        <h2>Financiamento & Poupança</h2>
+                        <p class="subtitle">Saldo seguro alocado em Bybit Earn</p>
+                        <div class="balance-item">
+                            <span class="label">USDT</span>
+                            <span class="value" id="earn-funding-usdt">0.00</span>
+                        </div>
+                        <div class="balance-item">
+                            <span class="label">BTC</span>
+                            <span class="value" id="earn-funding-btc">0.00000000</span>
+                        </div>
+                        <div class="balance-item">
+                            <span class="label">ETH</span>
+                            <span class="value" id="earn-funding-eth">0.00000000</span>
+                        </div>
+                        <div class="balance-item">
+                            <span class="label">SOL</span>
+                            <span class="value" id="earn-funding-sol">0.00000000</span>
+                        </div>
+                    </div>
+
+
+                </div>
+
+                <!-- Tabela de Investimentos Ativos -->
+                <div class="glass-card" style="width: 100%; max-width: 100%; margin-bottom: 2rem; border-color: rgba(99, 102, 241, 0.4);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                        <h2>Investimentos Ativos (Bybit Earn)</h2>
+                        <span class="badge" style="border-color: #6366f1; color: #6366f1; font-weight: bold; font-size: 0.75rem; padding: 0.2rem 0.6rem; border: 1px solid; border-radius: 4px;">Rendendo Juros</span>
+                    </div>
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Produto / Moeda</th>
+                                    <th>Valor Alocado</th>
+                                    <th>Taxa Anual (APY)</th>
+                                    <th>Data de Início</th>
+                                    <th>Rendimento Acumulado</th>
+                                    <th>Ação</th>
+                                </tr>
+                            </thead>
+                            <tbody id="active-earn-body">
+                                <tr><td colspan="6" style="text-align:center; padding: 1.5rem;">Nenhum investimento ativo no momento.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Lista de Oportunidades de Staking/Savings -->
+                <div class="glass-card" style="width: 100%; max-width: 100%;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
+                        <div>
+                            <h2>Buscar Oportunidades de Earn</h2>
+                            <p class="subtitle">Selecione produtos para alocar saldo e render diariamente</p>
+                        </div>
+                        <div style="display: flex; gap: 0.8rem; align-items: center;">
+                            <button class="btn btn-primary" onclick="startAutoEarn()" style="background-color: #10b981; border-color: #10b981; box-shadow: 0 0 10px rgba(16,185,129,0.3); padding: 0.5rem 1.2rem; font-weight: bold; width: auto; display: flex; align-items: center; gap: 0.4rem; margin: 0;">
+                                ⚡ AUTO-INVESTIR SALDO
+                            </button>
+                            <input type="text" id="earn-search" oninput="filterEarnProducts()" placeholder="Buscar por moeda (ex: USDT)..." style="padding: 0.5rem 1rem; min-width: 250px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); color: #fff; border-radius: 4px; outline: none; font-family: inherit;">
+                        </div>
+                    </div>
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Produto</th>
+                                    <th>Moeda</th>
+                                    <th>Taxa Estimada (APY)</th>
+                                    <th>Tipo</th>
+                                    <th>Mínimo para Investir</th>
+                                    <th>Ação</th>
+                                </tr>
+                            </thead>
+                            <tbody id="earn-opportunities-body">
+                                <!-- Preenchido dinamicamente -->
                             </tbody>
                         </table>
                     </div>

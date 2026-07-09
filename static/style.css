@@ -289,3 +289,28 @@ td {
 
 .side-long { color: var(--crypto-green); text-transform: uppercase; font-weight: bold; }
 .side-short { color: var(--crypto-red); text-transform: uppercase; font-weight: bold; }
+
+/* --- Bybit Earn Custom Styles --- */
+.input-text {
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid var(--border-color);
+    color: #fff;
+    border-radius: 6px;
+    padding: 0.6rem;
+    font-family: inherit;
+    font-size: 0.9rem;
+    outline: none;
+    transition: border-color 0.3s ease;
+}
+
+.input-text:focus {
+    border-color: #14b8a6;
+}
+
+#tab-btn-earn.active {
+    background: rgba(20, 184, 166, 0.15) !important;
+    border-color: #14b8a6 !important;
+    color: #14b8a6 !important;
+    box-shadow: 0 0 10px rgba(20, 184, 166, 0.3) !important;
+}
+
