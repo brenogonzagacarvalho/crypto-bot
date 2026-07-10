@@ -12,18 +12,12 @@ async function fetchStatus() {
 
 function updateUI(data) {
     // Atualiza Botões e Status
-    const btnStart = document.getElementById('btn-start');
-    const btnSniper = document.getElementById('btn-sniper');
-    const btnMartingale = document.getElementById('btn-martingale');
-    const btnTrend = document.getElementById('btn-trend');
     const btnStop = document.getElementById('btn-stop');
     const badge = document.getElementById('status-badge');
+    const strategyButtons = document.querySelectorAll('button[id^="btn-"]:not(#btn-stop)');
 
     if (data.is_running) {
-        btnStart.disabled = true;
-        btnSniper.disabled = true;
-        btnMartingale.disabled = true;
-        btnTrend.disabled = true;
+        strategyButtons.forEach(btn => btn.disabled = true);
         btnStop.disabled = false;
         badge.textContent = data.status;
         
@@ -53,10 +47,7 @@ function updateUI(data) {
             badge.style.boxShadow = "0 0 10px var(--crypto-green-glow)";
         }
     } else {
-        btnStart.disabled = false;
-        btnSniper.disabled = false;
-        btnMartingale.disabled = false;
-        btnTrend.disabled = false;
+        strategyButtons.forEach(btn => btn.disabled = false);
         btnStop.disabled = true;
         badge.textContent = data.status;
         badge.style.borderColor = "var(--border-color)";

@@ -149,25 +149,20 @@
                         </div>
 
                         <div class="buttons" style="margin-bottom: 1rem;">
-                            <button id="btn-start" class="btn btn-primary" onclick="startBot('spot')">▶ INICIAR SPOT</button>
                             <button id="btn-sniper" class="btn btn-danger" onclick="startBot('sniper')" style="background-color: #f97316;">🎯 SNIPER 20X</button>
-                        </div>
-                        <div class="buttons" style="margin-bottom: 1rem;">
                             <button id="btn-martingale" class="btn btn-danger" onclick="startBot('martingale')" style="background-color: #8b5cf6;">🎲 MARTINGALE</button>
+                        </div>
+                        <div class="buttons" style="margin-bottom: 1rem;">
                             <button id="btn-trend" class="btn btn-danger" onclick="startBot('trend')" style="background-color: #3b82f6;">🌊 TREND SCALPER</button>
-                        </div>
-                        <div class="buttons" style="margin-bottom: 1rem;">
                             <button id="btn-revmart" class="btn btn-danger" onclick="startBot('reverse_martingale')" style="background-color: #ef4444; box-shadow: 0 0 15px rgba(239,68,68,0.4);">🔥 REV. MARTINGALE</button>
+                        </div>
+                        <div class="buttons" style="margin-bottom: 1rem;">
                             <button id="btn-scalp10x" class="btn btn-danger" onclick="startBot('scalping_10x')" style="background-color: #10b981; box-shadow: 0 0 15px rgba(16,185,129,0.4);">🛡️ SCALPING 10X</button>
-                        </div>
-                        <div class="buttons" style="margin-bottom: 1rem;">
-                            <button id="btn-hybrid" class="btn btn-danger" onclick="startBot('longshort')" style="background-color: #6366f1; box-shadow: 0 0 15px rgba(99,102,241,0.6); width: 100%;">🦅 LONG/SHORT HÍBRIDO (SPOT)</button>
-                        </div>
-                        <div class="buttons" style="margin-bottom: 1rem;">
-                            <button id="btn-hybrid-lev" class="btn btn-danger" onclick="startBot('longshort_lev')" style="background-color: #ec4899; box-shadow: 0 0 15px rgba(236,72,153,0.6); width: 100%;">⚡ LONG/SHORT ALAVANCADO (FUTUROS)</button>
+                            <button id="btn-hybrid" class="btn btn-danger" onclick="startBot('longshort')" style="background-color: #6366f1; box-shadow: 0 0 15px rgba(99,102,241,0.6);">🦅 L/S HÍBR. (SPOT)</button>
                         </div>
                         <div class="buttons" style="margin-bottom: 1.5rem;">
-                            <button id="btn-double7" class="btn btn-danger" onclick="startBot('double7')" style="background-color: #dc2626; box-shadow: 0 0 15px rgba(220,38,38,0.8); width: 100%;">🚀 DOBRAR EM 7 DIAS (5x AGRESSIVO)</button>
+                            <button id="btn-hybrid-lev" class="btn btn-danger" onclick="startBot('longshort_lev')" style="background-color: #ec4899; box-shadow: 0 0 15px rgba(236,72,153,0.6);">⚡ L/S ALAV. (FUTUROS)</button>
+                            <button id="btn-double7" class="btn btn-danger" onclick="startBot('double7')" style="background-color: #dc2626; box-shadow: 0 0 15px rgba(220,38,38,0.8);">🚀 DOBRAR EM 7 DIAS</button>
                         </div>
                         <div class="buttons">
                             <button id="btn-stop" class="btn btn-danger" onclick="stopBot()" disabled>⏹ PARAR BOT</button>
@@ -203,14 +198,6 @@
                                 <tr><td colspan="8" style="text-align:center;">Nenhuma posição aberta.</td></tr>
                             </tbody>
                         </table>
-                    </div>
-                </div>
-
-                <!-- Terminal de Logs -->
-                <div class="glass-card terminal-card" style="margin-top: 1.5rem;">
-                    <h2>Live Terminal</h2>
-                    <div class="terminal-window" id="terminal-logs">
-                        <p class="log-line">Aguardando inicialização...</p>
                     </div>
                 </div>
             </div>
@@ -350,6 +337,14 @@
                             </tbody>
                         </table>
                     </div>
+                </div>
+            </div>
+
+            <!-- Terminal de Logs Global -->
+            <div class="glass-card terminal-card" style="margin-top: 1.5rem; width: 100%; max-width: 100%;">
+                <h2>Live Terminal</h2>
+                <div class="terminal-window" id="terminal-logs">
+                    <p class="log-line">Aguardando inicialização...</p>
                 </div>
             </div>
         </main>
