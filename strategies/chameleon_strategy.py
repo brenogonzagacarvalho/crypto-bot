@@ -176,17 +176,17 @@ def run_chameleon_strategy(exchange, symbol='BTC/USDT:USDT', leverage=10, check_
             pass
 
     # Lê saldo inicial
-    collateral_usd, _ = get_available_margin_usd(exchange)
-    if collateral_usd is None:
+    available_usd, total_equity = get_available_margin_usd(exchange)
+    if available_usd is None or total_equity is None:
         add_log("❌ Falha ao ler saldo inicial. Encerrando.")
         bot_state["is_running"] = False
         bot_state["status"] = "🔴 Erro API"
         return
 
-    bot_state["usdt_balance"]       = collateral_usd
-    initial_collateral_usd          = collateral_usd
-    daily_profit_target_usd         = max(0.50, 0.05 * collateral_usd)   # meta +5% (mínimo $0.50)
-    daily_loss_limit_usd            = min(-0.25, -0.02 * collateral_usd)  # limite -2% (mínimo -$0.25 para evitar desligamento precoce)
+    bot_state["usdt_balance"]       = total_equity  # Mostra patrimônio total
+    initial_equity_usd              = total_equity
+    daily_profit_target_usd         = max(0.50, 0.05 * initial_equity_usd)   # meta +5% (mínimo $0.50)
+    daily_loss_limit_usd            = min(-0.25, -0.02 * initial_equity_usd)  # limite -2% (mínimo -$0.25 para evitar desligamento precoce)
 
     active_positions = {}
     MAX_POSITIONS = 3
@@ -195,15 +195,16 @@ def run_chameleon_strategy(exchange, symbol='BTC/USDT:USDT', leverage=10, check_
     try:
         while bot_state["is_running"]:
             scan_count += 1
-            collateral_usd, _ = get_available_margin_usd(exchange)
-            if collateral_usd is None:
+            available_usd, total_equity = get_available_margin_usd(exchange)
+            if available_usd is None or total_equity is None:
                 add_log("⚠️ Erro ao ler saldo. Aguardando...")
                 time.sleep(10)
                 continue
-            bot_state["usdt_balance"] = collateral_usd
+            bot_state["usdt_balance"] = total_equity
+            collateral_usd = available_usd
 
-            # Verifica metas de lucro/perda diária
-            delta = collateral_usd - initial_collateral_usd
+            # Verifica metas de lucro/perda diária (baseado no Patrimônio Total para evitar ruídos de margem bloqueada)
+            delta = total_equity - initial_equity_usd
             if delta >= daily_profit_target_usd:
                 add_log(f"🏆 Meta de lucro diário atingida! Lucro: ${delta:.2f}. Desligando bot.")
                 break
