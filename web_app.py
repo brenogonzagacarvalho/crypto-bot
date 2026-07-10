@@ -23,6 +23,7 @@ from strategies.reverse_martingale_pro import run_reverse_martingale_pro
 from strategies.scalping_10x import run_scalping_10x
 from strategies.survival_scalper import run_survival_scalper
 from strategies.chameleon_strategy import run_chameleon_strategy
+from strategies.fibonacci_retracement import run_fibonacci_strategy
 import time
 import logging
 from datetime import datetime
@@ -694,7 +695,7 @@ def start_bot():
     strategy = data.get('strategy', 'spot')
     symbol = data.get('symbol', 'BTC/USDT:USDT')
     
-    estrategias_multi = ['survival', 'reverse_martingale', 'scalping_10x', 'sniper']
+    estrategias_multi = ['survival', 'reverse_martingale', 'scalping_10x', 'sniper', 'chameleon', 'fibonacci']
     if symbol == 'MULTI' and strategy not in estrategias_multi:
         add_log(f"⚠️ A estratégia '{strategy}' não suporta MULTI. Usando BTC por padrão.")
         symbol = 'BTC/USDT:USDT'
@@ -731,10 +732,16 @@ def start_bot():
         thread = threading.Thread(target=run_double_7, args=(exchange, symbol))
     elif strategy == 'chameleon':
         # Garante formato linear perpetual (ex: ETH/USDT -> ETH/USDT:USDT)
-        if ':' not in symbol:
+        if symbol != 'MULTI' and ':' not in symbol:
             symbol = symbol.split('/')[0] + '/USDT:USDT'
         add_log(f"Comando de INICIAR CAMALEÃO recebido para {symbol}...")
         thread = threading.Thread(target=run_chameleon_strategy, args=(exchange, symbol))
+    elif strategy == 'fibonacci':
+        # Garante formato linear perpetual (ex: ETH/USDT -> ETH/USDT:USDT)
+        if symbol != 'MULTI' and ':' not in symbol:
+            symbol = symbol.split('/')[0] + '/USDT:USDT'
+        add_log(f"Comando de INICIAR FIBONACCI recebido para {symbol}...")
+        thread = threading.Thread(target=run_fibonacci_strategy, args=(exchange, symbol))
     else:
         add_log(f"Comando de INICIAR SPOT recebido para {symbol}...")
         thread = threading.Thread(target=run_live_predictor, args=(exchange, symbol))

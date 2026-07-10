@@ -23,7 +23,7 @@ def load_config():
         add_log(f"Aviso: Não foi possível carregar config: {e}. Usando defaults.")
         return {
             "max_leverage": 20, "risk_per_trade": 0.20, "max_daily_loss_pct": 0.30,
-            "min_balance": 3.0, "take_profit_pct": 1.5, "stop_loss_pct": 0.8,
+            "min_balance": 3.0, "take_profit_pct": 1.5, "stop_loss_pct": 0.5,
             "cooldown_seconds": 30, "min_winrate_to_continue": 40
         }
 

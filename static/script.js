@@ -132,12 +132,12 @@ function updateUI(data) {
 async function startBot(strategyType = 'spot') {
     const selectedCoin = document.getElementById('coin-selector').value;
     
-    if (selectedCoin === "MULTI" && strategyType !== "scalping_10x" && strategyType !== "reverse_martingale" && strategyType !== "sniper" && strategyType !== "survival") {
-        alert("O modo Scanner MULTI está disponível apenas nas estratégias: Survival Scalper, Scalping 10x, Reverse Martingale e Alavancagem Sniper.");
+    if (selectedCoin === "MULTI" && strategyType !== "scalping_10x" && strategyType !== "reverse_martingale" && strategyType !== "sniper" && strategyType !== "survival" && strategyType !== "chameleon" && strategyType !== "fibonacci") {
+        alert("O modo Scanner MULTI está disponível apenas nas estratégias: Survival Scalper, Scalping 10x, Reverse Martingale, Alavancagem Sniper, Camaleão e Retração Fibonacci.");
         return;
     }
     
-    const isDerivatives = strategyType === 'sniper' || strategyType === 'martingale' || strategyType === 'trend' || strategyType === 'reverse_martingale' || strategyType === 'scalping_10x' || strategyType === 'survival' || strategyType === 'longshort_lev' || strategyType === 'double7';
+    const isDerivatives = strategyType === 'sniper' || strategyType === 'martingale' || strategyType === 'trend' || strategyType === 'reverse_martingale' || strategyType === 'scalping_10x' || strategyType === 'survival' || strategyType === 'longshort_lev' || strategyType === 'double7' || strategyType === 'chameleon' || strategyType === 'fibonacci';
     
     let symbol = "";
     if (selectedCoin === "MULTI") {

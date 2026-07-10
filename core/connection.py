@@ -25,6 +25,7 @@ def get_exchange():
         'enableRateLimit': True, 
         'options': {
             'adjustForTimeDifference': True, # Previne erro 10002 de timestamp
+            'recvWindow': 60000,             # Aumenta a tolerância de dessincronização de horário para 60s
             'defaultType': 'spot', # Define spot como padrão
         }
     })

@@ -176,7 +176,7 @@ def run_sniper_leverage(exchange, symbol='BTC/USDT:USDT', leverage=100, check_in
                     # GATILHO LONG: Acima da EMA 200 + RSI Subindo + MACD Positivo
                     if current_price > ema200 and rsi <= 45 and rsi > prev_rsi: 
                         add_log(f"🎯 SNIPER LONG PROFISSIONAL em {coin_name}!")
-                        trade_size = collateral_usd * 0.95
+                        trade_size = collateral_usd * 0.20
                         amount_to_buy = (trade_size * leverage) / current_price
                         tp_price = round(current_price * 1.01, 2)
                         sl_price = round(current_price * 0.995, 2)
@@ -193,7 +193,7 @@ def run_sniper_leverage(exchange, symbol='BTC/USDT:USDT', leverage=100, check_in
                     # GATILHO SHORT: Abaixo da EMA 200 + RSI Caindo + MACD Negativo
                     elif current_price < ema200 and rsi >= 55 and rsi < prev_rsi:
                         add_log(f"🎯 SNIPER SHORT PROFISSIONAL em {coin_name}!")
-                        trade_size = collateral_usd * 0.95
+                        trade_size = collateral_usd * 0.20
                         amount_to_sell = (trade_size * leverage) / current_price
                         tp_price = round(current_price * 0.99, 2)
                         sl_price = round(current_price * 1.005, 2)

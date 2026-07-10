@@ -9,7 +9,7 @@ import numpy as np
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.market_data import fetch_ohlcv_data, calculate_rsi, calculate_ema, calculate_macd
 from core.shared_state import bot_state, add_log
-from core.balance_utils import get_unified_balance, get_available_margin_usd, enable_btc_collateral, place_maker_entry
+from core.balance_utils import get_unified_balance, get_available_margin_usd, enable_btc_collateral, place_maker_entry, get_closed_pnl
 
 # --- SISTEMA DE LOG EM CSV ---
 LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'logs')
@@ -99,17 +99,13 @@ def detect_market_regime(ohlcv_5m, ohlcv_1h, ohlcv_15m):
 def execute_trend_following(exchange, symbol, current_price, regime, signals, usdt_balance, leverage):
     RISK_PER_TRADE_PCT = 0.01  # 1% do capital por trade
 
-    if usdt_balance < 10:
-        add_log(f"⚠️ Saldo USDT insuficiente para Trend Following ({usdt_balance:.2f} < 10).")
+    if usdt_balance < 2.0:
+        add_log(f"⚠️ Saldo USDT insuficiente para Trend Following ({usdt_balance:.2f} < 2.0).")
         return False
 
-    trade_size_usd = usdt_balance * RISK_PER_TRADE_PCT * leverage
-    if trade_size_usd < 1:
-        add_log(f"⚠️ Tamanho de trade muito pequeno ({trade_size_usd:.2f} USD).")
-        return False
-
+    trade_size_usd = max(2.0, usdt_balance * RISK_PER_TRADE_PCT * leverage)
     amount   = trade_size_usd / current_price
-    tp_pct   = 0.01
+    tp_pct   = 0.015
     sl_pct   = 0.005
 
     if regime == 'UPTREND':
@@ -130,17 +126,13 @@ def execute_trend_following(exchange, symbol, current_price, regime, signals, us
 def execute_mean_reversion(exchange, symbol, current_price, regime, signals, usdt_balance, leverage):
     RISK_PER_TRADE_PCT = 0.005  # 0.5% do capital por trade (mais conservador para range)
 
-    if usdt_balance < 10:
-        add_log(f"⚠️ Saldo USDT insuficiente para Mean Reversion ({usdt_balance:.2f} < 10).")
+    if usdt_balance < 2.0:
+        add_log(f"⚠️ Saldo USDT insuficiente para Mean Reversion ({usdt_balance:.2f} < 2.0).")
         return False
 
-    trade_size_usd = usdt_balance * RISK_PER_TRADE_PCT * leverage
-    if trade_size_usd < 1:
-        add_log(f"⚠️ Tamanho de trade muito pequeno ({trade_size_usd:.2f} USD).")
-        return False
-
+    trade_size_usd = max(2.0, usdt_balance * RISK_PER_TRADE_PCT * leverage)
     amount = trade_size_usd / current_price
-    tp_pct = 0.005
+    tp_pct = 0.0075
     sl_pct = 0.0025
 
     rsi = signals.get('rsi')
@@ -162,24 +154,28 @@ def execute_mean_reversion(exchange, symbol, current_price, regime, signals, usd
 def run_chameleon_strategy(exchange, symbol='BTC/USDT:USDT', leverage=10, check_interval=60):
     init_trade_log()
 
+    is_multi = (symbol == "MULTI")
+    symbols_to_scan = ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT", "XRP/USDT:USDT", "ADA/USDT:USDT", "DOGE/USDT:USDT"] if is_multi else [symbol]
+
     add_log(f"{'='*55}")
-    add_log(f"🦎 ESTRATÉGIA CAMALEÃO — {symbol}")
-    add_log(f"📊 Adaptação Dinâmica ao Regime de Mercado")
+    add_log(f"🦎 ESTRATÉGIA CAMALEÃO — {'MULTI-SCAN' if is_multi else symbol}")
+    add_log(f"📊 Adaptação Dinâmica ao Regime de Mercado | Alavancagem: {leverage}x")
     add_log(f"{'='*55}")
 
     bot_state["is_running"] = True
-    bot_state["status"]     = "🟢 Analisando Regimes"
-    bot_state["coin_name"]  = symbol.split('/')[0]
+    bot_state["status"]     = f"🦎 Camaleão ({leverage}x)"
+    bot_state["coin_name"]  = "SCANNING" if is_multi else symbol.split('/')[0]
 
     enable_btc_collateral(exchange)
 
-    try:
-        exchange.set_leverage(leverage, symbol)
-        add_log(f"Alavancagem setada para {leverage}x em {symbol}!")
-    except Exception as e:
-        add_log(f"Aviso: Não foi possível setar alavancagem para {leverage}x: {e}")
+    for sym in symbols_to_scan:
+        try:
+            exchange.set_leverage(leverage, sym)
+            add_log(f"Alavancagem setada para {leverage}x em {sym}!")
+        except Exception as e:
+            pass
 
-    # Lê saldo inicial ANTES de usar collateral_usd
+    # Lê saldo inicial
     collateral_usd, _ = get_available_margin_usd(exchange)
     if collateral_usd is None:
         add_log("❌ Falha ao ler saldo inicial. Encerrando.")
@@ -189,14 +185,11 @@ def run_chameleon_strategy(exchange, symbol='BTC/USDT:USDT', leverage=10, check_
 
     bot_state["usdt_balance"]       = collateral_usd
     initial_collateral_usd          = collateral_usd
-    daily_profit_target_usd         = 0.05 * collateral_usd   # meta +5%
-    daily_loss_limit_usd            = -0.02 * collateral_usd  # limite -2%
+    daily_profit_target_usd         = max(0.50, 0.05 * collateral_usd)   # meta +5% (mínimo $0.50)
+    daily_loss_limit_usd            = min(-0.25, -0.02 * collateral_usd)  # limite -2% (mínimo -$0.25 para evitar desligamento precoce)
 
-    in_position  = False
-    active_symbol = None
-    entry_price  = 0.0
-    entry_side   = None
-    regime_atual = 'NEUTRAL'
+    active_positions = {}
+    MAX_POSITIONS = 3
     scan_count   = 0
 
     try:
@@ -209,18 +202,6 @@ def run_chameleon_strategy(exchange, symbol='BTC/USDT:USDT', leverage=10, check_
                 continue
             bot_state["usdt_balance"] = collateral_usd
 
-            add_log(f"── Scan #{scan_count} | ${collateral_usd:.2f} USD ──")
-
-            # Coleta de dados para detecção de regime
-            ohlcv_5m  = fetch_ohlcv_data(exchange, symbol, timeframe='5m',  limit=210)
-            ohlcv_15m = fetch_ohlcv_data(exchange, symbol, timeframe='15m', limit=210)
-            ohlcv_1h  = fetch_ohlcv_data(exchange, symbol, timeframe='1h',  limit=210)
-
-            if not ohlcv_5m or not ohlcv_15m or not ohlcv_1h:
-                add_log("Erro ao buscar dados OHLCV. Pulando scan.")
-                time.sleep(check_interval)
-                continue
-
             # Verifica metas de lucro/perda diária
             delta = collateral_usd - initial_collateral_usd
             if delta >= daily_profit_target_usd:
@@ -230,83 +211,167 @@ def run_chameleon_strategy(exchange, symbol='BTC/USDT:USDT', leverage=10, check_
                 add_log(f"❌ Limite de perda diário atingido! Perda: ${abs(delta):.2f}. Desligando bot.")
                 break
 
-            regime_atual = detect_market_regime(ohlcv_5m, ohlcv_1h, ohlcv_15m)
-            add_log(f"Regime de Mercado Detectado: {regime_atual}")
-            bot_state["status"] = f"🟢 Analisando ({regime_atual})"
+            # --- MONITORAMENTO DE POSIÇÕES ABERTAS ---
+            try:
+                all_positions = []
+                for sym in symbols_to_scan:
+                    try:
+                        all_positions.extend(exchange.fetch_positions([sym]))
+                    except:
+                        pass
+                current_open_symbols = set()
 
-            closes_5m     = ohlcv_5m['c']
-            current_price = closes_5m[-1]
-            rsi           = calculate_rsi(closes_5m, period=14)
-            ema200        = calculate_ema(closes_5m, period=200)
-            _, _, hist    = calculate_macd(closes_5m)
+                for pos in all_positions:
+                    contracts = float(pos.get('contracts') or 0)
+                    if contracts > 0:
+                        sym = pos['symbol']
+                        current_open_symbols.add(sym)
 
-            bot_state["current_price"] = current_price
-            bot_state["rsi"]           = rsi
+                        entry_p = float(pos.get('entryPrice') or 0)
+                        side = pos['side'].upper()
+                        if sym not in active_positions:
+                            active_positions[sym] = {'side': side, 'entry_price': entry_p}
+                            log_trade(sym, 'DETECT', 'ENTRADA', side, entry_p, 0, 0, 0, leverage, contracts, collateral_usd, '✅ Posição Detectada')
 
-            signals = {'rsi': rsi, 'ema200': ema200, 'macd_hist': hist, 'current_price': current_price}
+                        unrealized_pnl = float(pos.get('unrealizedPnl') or 0)
+                        liq_price = pos.get('liquidationPrice')
+                        roi = pos.get('percentage')
+                        margin = pos.get('initialMargin')
 
-            log_trade(symbol, regime_atual, 'SCAN', '-', current_price, rsi, ema200, hist, leverage, 0, collateral_usd, bot_state["status"], str(signals))
+                        liq_str = f" | Liq: ${float(liq_price or 0):,.2f}" if liq_price else ""
+                        roi_str = f" | ROI: {float(roi or 0):+.2f}%" if roi is not None else ""
+                        marg_str = f" | Margem: ${float(margin or 0):.2f}" if margin else ""
 
-            if not in_position:
-                if regime_atual in ['UPTREND', 'DOWNTREND']:
-                    if execute_trend_following(exchange, symbol, current_price, regime_atual, signals, collateral_usd, leverage):
-                        in_position   = True
-                        active_symbol = symbol
-                        entry_price   = current_price
-                        entry_side    = 'LONG' if regime_atual == 'UPTREND' else 'SHORT'
-                        add_log(f"✅ Posição {entry_side} aberta em {active_symbol} @ {entry_price:.2f}")
-                elif regime_atual == 'RANGE':
-                    if execute_mean_reversion(exchange, symbol, current_price, regime_atual, signals, collateral_usd, leverage):
-                        in_position   = True
-                        active_symbol = symbol
-                        entry_price   = current_price
-                        rsi_val       = signals.get('rsi')
-                        entry_side    = 'LONG' if (rsi_val is not None and rsi_val < 30) else 'SHORT'
-                        add_log(f"✅ Posição {entry_side} aberta em {active_symbol} @ {entry_price:.2f}")
-                elif regime_atual == 'VOLATILE':
-                    add_log("⚠️ Mercado Volátil. Não operando neste regime.")
-            else:
-                # Monitora posição existente
+                        add_log(f"📊 {sym} {side} Aberto:")
+                        add_log(f"  💰 Qtd: {contracts}{marg_str}{liq_str}")
+                        add_log(f"  💵 PnL: ${unrealized_pnl:+.4f}{roi_str}")
+                
+                # Checa fechamentos por TP/SL ou externo
+                closed_symbols = list(set(active_positions.keys()) - current_open_symbols)
+                for sym in closed_symbols:
+                    new_collateral_usd, _ = get_available_margin_usd(exchange)
+                    time.sleep(3) # Espera a Bybit registrar
+                    resultado = get_closed_pnl(exchange, sym, limit=1)
+                    resultado_emoji = "🏆 LUCRO" if resultado > 0 else "💀 LOSS"
+
+                    add_log(f"{'='*50}")
+                    add_log(f"{resultado_emoji}: Fechamento em {sym} | ${resultado:+.4f}")
+                    add_log(f"{'='*50}")
+
+                    try:
+                        ticker = exchange.fetch_ticker(sym)
+                        close_price = float(ticker['last'])
+                    except:
+                        close_price = active_positions[sym]['entry_price']
+
+                    resultado_str = f"{'+$' if resultado >= 0 else '-$'}{abs(resultado):.4f}"
+                    log_trade(sym, 'OUT', 'SAÍDA', active_positions[sym]['side'], close_price, 0, 0, 0, leverage, 0, new_collateral_usd, resultado_emoji, resultado_str)
+                    del active_positions[sym]
+                    collateral_usd = new_collateral_usd
+            except Exception as e:
+                add_log(f"⚠️ Erro ao monitorar posições: {e}")
+
+            # --- MONITORAMENTO DE MUDANÇA DE REGIME PARA POSIÇÕES ABERTAS ---
+            symbols_to_check = list(active_positions.keys())
+            for sym in symbols_to_check:
                 try:
-                    positions    = exchange.fetch_positions([active_symbol])
-                    has_position = False
-                    for pos in positions:
-                        if float(pos.get('contracts', 0)) != 0:
-                            has_position = True
-                            pnl_pct = float(pos.get('percentage', 0))
-                            add_log(f"Monitorando {active_symbol} ({entry_side}) @ {entry_price:.2f} | PnL: {pnl_pct:.2f}%")
-                            break
-                    if not has_position:
-                        add_log(f"✅ Posição em {active_symbol} fechada (TP/SL ou manual).")
-                        in_position   = False
-                        active_symbol = None
-                        entry_price   = 0.0
-                        entry_side    = None
-                except Exception as e:
-                    add_log(f"Erro ao verificar posições: {e}")
-                    in_position   = False
-                    active_symbol = None
-                    entry_price   = 0.0
-                    entry_side    = None
+                    ohlcv_5m  = fetch_ohlcv_data(exchange, sym, timeframe='5m',  limit=210)
+                    ohlcv_15m = fetch_ohlcv_data(exchange, sym, timeframe='15m', limit=210)
+                    ohlcv_1h  = fetch_ohlcv_data(exchange, sym, timeframe='1h',  limit=210)
+                    if not ohlcv_5m or not ohlcv_15m or not ohlcv_1h: continue
 
-                # Sai se o regime inverter contra a posição
-                if ((regime_atual == 'DOWNTREND' and entry_side == 'LONG') or
-                        (regime_atual == 'UPTREND' and entry_side == 'SHORT') or
-                        regime_atual == 'VOLATILE'):
-                    add_log(f"⚠️ Regime mudou para {regime_atual}! Resetando estado da posição {entry_side}.")
-                    in_position   = False
-                    active_symbol = None
-                    entry_price   = 0.0
-                    entry_side    = None
+                    regime_pos = detect_market_regime(ohlcv_5m, ohlcv_1h, ohlcv_15m)
+                    side_pos = active_positions[sym]['side']
+
+                    if ((regime_pos == 'DOWNTREND' and (side_pos == 'LONG' or side_pos == 'BUY')) or
+                        (regime_pos == 'UPTREND' and (side_pos == 'SHORT' or side_pos == 'SELL')) or
+                        regime_pos == 'VOLATILE'):
+                        
+                        add_log(f"⚠️ Regime em {sym} mudou para {regime_pos}! Fechando posição {side_pos} por segurança.")
+                        
+                        positions = exchange.fetch_positions([sym])
+                        contracts = 0
+                        for pos in positions:
+                            if pos['symbol'] == sym:
+                                contracts = float(pos.get('contracts') or 0)
+                                break
+                        
+                        if contracts > 0:
+                            side_to_close = 'sell' if side_pos in ['LONG', 'BUY'] else 'buy'
+                            exchange.create_order(sym, 'market', side_to_close, contracts, params={'reduceOnly': True, 'category': 'linear'})
+                            
+                            new_collateral_usd, _ = get_available_margin_usd(exchange)
+                            time.sleep(3)
+                            resultado = get_closed_pnl(exchange, sym, limit=1)
+                            resultado_emoji = "🏆 LUCRO" if resultado > 0 else "💀 LOSS"
+                            resultado_str = f"{'+$' if resultado >= 0 else '-$'}{abs(resultado):.4f}"
+                            
+                            log_trade(sym, regime_pos, 'SAÍDA_REGIME', side_pos, ohlcv_5m['c'][-1], 0, 0, 0, leverage, contracts, new_collateral_usd, resultado_emoji, f"Fechamento por Regime: {resultado_str}")
+                            
+                            del active_positions[sym]
+                            collateral_usd = new_collateral_usd
+                except Exception as e:
+                    add_log(f"⚠️ Erro ao verificar regime de saída para {sym}: {e}")
+
+            # --- BUSCA POR NOVAS ENTRADAS ---
+            if len(active_positions) < MAX_POSITIONS:
+                add_log(f"── Scanner #{scan_count} | Abertas {len(active_positions)}/{MAX_POSITIONS} | Saldo: ${collateral_usd:.2f} ──")
+                
+                for sym in symbols_to_scan:
+                    if not bot_state["is_running"] or len(active_positions) >= MAX_POSITIONS: break
+                    if sym in active_positions: continue
+                    
+                    coin_name = sym.split('/')[0]
+                    bot_state["coin_name"] = coin_name
+                    
+                    ohlcv_5m  = fetch_ohlcv_data(exchange, sym, timeframe='5m',  limit=210)
+                    ohlcv_15m = fetch_ohlcv_data(exchange, sym, timeframe='15m', limit=210)
+                    ohlcv_1h  = fetch_ohlcv_data(exchange, sym, timeframe='1h',  limit=210)
+                    
+                    if not ohlcv_5m or not ohlcv_15m or not ohlcv_1h:
+                        continue
+                    
+                    regime_atual = detect_market_regime(ohlcv_5m, ohlcv_1h, ohlcv_15m)
+                    bot_state["status"] = f"🦎 Analisando ({regime_atual})"
+                    
+                    closes_5m     = ohlcv_5m['c']
+                    current_price = closes_5m[-1]
+                    rsi           = calculate_rsi(closes_5m, period=14)
+                    ema200        = calculate_ema(closes_5m, period=200)
+                    _, _, hist    = calculate_macd(closes_5m)
+                    
+                    if rsi is None or ema200 is None or hist is None: continue
+                    
+                    bot_state["current_price"] = current_price
+                    bot_state["rsi"]           = rsi
+                    
+                    signals = {'rsi': rsi, 'ema200': ema200, 'macd_hist': hist, 'current_price': current_price}
+                    
+                    log_trade(sym, regime_atual, 'SCAN', '-', current_price, rsi, ema200, hist, leverage, 0, collateral_usd, bot_state["status"], str(signals))
+                    
+                    if regime_atual in ['UPTREND', 'DOWNTREND']:
+                        if execute_trend_following(exchange, sym, current_price, regime_atual, signals, collateral_usd, leverage):
+                            entry_side = 'LONG' if regime_atual == 'UPTREND' else 'SHORT'
+                            active_positions[sym] = {'side': entry_side, 'entry_price': current_price}
+                            add_log(f"✅ Posição {entry_side} aberta em {sym} @ {current_price:.2f}")
+                            
+                    elif regime_atual == 'RANGE':
+                        if execute_mean_reversion(exchange, sym, current_price, regime_atual, signals, collateral_usd, leverage):
+                            entry_side = 'LONG' if (rsi < 30) else 'SHORT'
+                            active_positions[sym] = {'side': entry_side, 'entry_price': current_price}
+                            add_log(f"✅ Posição {entry_side} aberta em {sym} @ {current_price:.2f}")
+                            
+                    elif regime_atual == 'VOLATILE':
+                        pass
+                    
+                    time.sleep(0.5)
 
             for _ in range(check_interval):
-                if not bot_state["is_running"]:
-                    break
+                if not bot_state["is_running"]: break
                 time.sleep(1)
-
+                
     except Exception as e:
         add_log(f"💥 Erro Crítico na Estratégia Camaleão: {e}")
-        log_trade(symbol, regime_atual, 'ERRO_CRITICO', '-', 0, 0, 0, 0, leverage, 0, collateral_usd, '💥 CRASH', str(e))
     finally:
         add_log(f"{'='*55}")
         add_log("Estratégia Camaleão Finalizada.")
