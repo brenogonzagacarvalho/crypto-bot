@@ -39,7 +39,7 @@ def log_trade(symbol, tipo, direcao, preco, swing_l, swing_h, fib_618, fib_786, 
     except Exception as e:
         add_log(f"Aviso log CSV: {e}")
 
-def run_fibonacci_strategy(exchange, symbol='MULTI', leverage=10, check_interval=10):
+def run_fibonacci_strategy(exchange, symbol='MULTI', leverage=25, check_interval=10):
     init_trade_log()
 
     is_multi = (symbol == "MULTI")
@@ -154,7 +154,7 @@ def run_fibonacci_strategy(exchange, symbol='MULTI', leverage=10, check_interval
                         close_price = active_positions[sym]['entry_price']
 
                     resultado_str = f"{'+$' if resultado >= 0 else '-$'}{abs(resultado):.4f}"
-                    log_trade(sym, 'OUT', 'SAÍDA', active_positions[sym]['side'], close_price, 0, 0, 0, 0, leverage, 0, 0, new_collateral_usd, resultado_emoji, resultado_str)
+                    log_trade(sym, 'OUT', active_positions[sym]['side'], close_price, 0, 0, 0, 0, leverage, 0, 0, new_collateral_usd, resultado_emoji, resultado_str)
                     del active_positions[sym]
                     collateral_usd = new_collateral_usd
             except Exception as e:
@@ -171,36 +171,32 @@ def run_fibonacci_strategy(exchange, symbol='MULTI', leverage=10, check_interval
                     coin_name = sym.split('/')[0]
                     bot_state["coin_name"] = coin_name
 
-                    # 1. Obter dados de 5m (para detectar o swing)
-                    ohlcv_5m = fetch_ohlcv_data(exchange, sym, timeframe='5m', limit=30)
-                    if not ohlcv_5m or len(ohlcv_5m['c']) < 20: continue
-
-                    # 2. Obter dados de 1m (para monitorar toques e preço atual)
-                    ohlcv_1m = fetch_ohlcv_data(exchange, sym, timeframe='1m', limit=5)
-                    if not ohlcv_1m: continue
+                    # 1. Obter dados de 1m (limit=210 para podermos calcular EMA 200)
+                    ohlcv_1m = fetch_ohlcv_data(exchange, sym, timeframe='1m', limit=210)
+                    if not ohlcv_1m or len(ohlcv_1m['c']) < 200: continue
                     current_price = ohlcv_1m['c'][-1]
                     bot_state["current_price"] = current_price
 
-                    # 3. Calcular Swings e Níveis Fibonacci (gráfico 5m)
-                    highs_5m = ohlcv_5m['h']
-                    lows_5m = ohlcv_5m['l']
-                    closes_5m = ohlcv_5m['c']
+                    # 2. Calcular Swings baseados nas últimas 30 velas de 1m
+                    highs_30 = ohlcv_1m['h'][-30:]
+                    lows_30 = ohlcv_1m['l'][-30:]
+                    closes_1m = ohlcv_1m['c']
 
-                    max_high = max(highs_5m)
-                    min_low = min(lows_5m)
+                    max_high = max(highs_30)
+                    min_low = min(lows_30)
                     diff = max_high - min_low
 
                     if diff <= 0: continue
 
-                    max_high_idx = highs_5m.index(max_high)
-                    min_low_idx = lows_5m.index(min_low)
+                    max_high_idx = highs_30.index(max_high)
+                    min_low_idx = lows_30.index(min_low)
 
-                    # 4. Calcular Indicadores Técnicos de Confirmação (gráfico 5m)
-                    rsi_5m = calculate_rsi(closes_5m, period=14)
-                    ema200 = calculate_ema(closes_5m, period=200)
-                    macd_line, signal_line, macd_hist = calculate_macd(closes_5m)
+                    # 3. Calcular Indicadores Técnicos de Confirmação no gráfico de 1m
+                    rsi_1m = calculate_rsi(closes_1m, period=14)
+                    ema200 = calculate_ema(closes_1m, period=200)
+                    macd_line, signal_line, macd_hist = calculate_macd(closes_1m)
 
-                    if rsi_5m is None or ema200 is None or macd_hist is None: continue
+                    if rsi_1m is None or ema200 is None or macd_hist is None: continue
 
                     # Identifica tipo de Swing e níveis Fib baseado na cronologia
                     if min_low_idx < max_high_idx:
@@ -221,7 +217,7 @@ def run_fibonacci_strategy(exchange, symbol='MULTI', leverage=10, check_interval
                             continue
 
                         # Loga status dos indicadores no scanner
-                        add_log(f"  {coin_name}: Preço: ${current_price:,.4f} | Fib 61.8%: ${fib_618:,.4f} | Sl (Fundo): ${sl_price:,.4f} | RSI: {rsi_5m:.1f} | EMA200: {ema200:.2f}")
+                        add_log(f"  {coin_name}: Preço: ${current_price:,.4f} | Fib 61.8%: ${fib_618:,.4f} | Sl (Fundo): ${sl_price:,.4f} | RSI: {rsi_1m:.1f} | EMA200: {ema200:.2f}")
 
                         # Gatilhos + Indicadores
                         # 1. Preço entre Fib 61.8% e o Fundo do Swing (min_low)
@@ -230,7 +226,7 @@ def run_fibonacci_strategy(exchange, symbol='MULTI', leverage=10, check_interval
                         # 4. Histograma do MACD indicando que a queda desacelerou
                         if (sl_price < current_price <= fib_618 and 
                             current_price > ema200 and 
-                            rsi_5m <= 50 and 
+                            rsi_1m <= 50 and 
                             macd_hist > -0.05 * current_price):
                             
                             add_log(f"📐 SINAL FIBONACCI LONG CONFIRMADO em {coin_name}! Entrada em {current_price:,.4f}")
@@ -246,7 +242,7 @@ def run_fibonacci_strategy(exchange, symbol='MULTI', leverage=10, check_interval
                                 if filled:
                                     active_positions[sym] = {'side': 'LONG', 'entry_price': current_price}
                                     last_trade_swing[sym] = swing_tuple
-                                    log_trade(sym, 'ENTRADA', 'LONG', current_price, min_low, max_high, fib_618, sl_price, leverage, tp_price_prec, sl_price_prec, collateral_usd, '✅ SUCESSO', f'RSI: {rsi_5m:.1f}')
+                                    log_trade(sym, 'ENTRADA', 'LONG', current_price, min_low, max_high, fib_618, sl_price, leverage, tp_price_prec, sl_price_prec, collateral_usd, '✅ SUCESSO', f'RSI: {rsi_1m:.1f}')
                             except Exception as e:
                                 add_log(f"❌ Erro de Entrada LONG: {e}")
 
@@ -267,7 +263,7 @@ def run_fibonacci_strategy(exchange, symbol='MULTI', leverage=10, check_interval
                             continue
 
                         # Loga status dos indicadores no scanner
-                        add_log(f"  {coin_name}: Preço: ${current_price:,.4f} | Fib 61.8%: ${fib_618:,.4f} | Sl (Topo): ${sl_price:,.4f} | RSI: {rsi_5m:.1f} | EMA200: {ema200:.2f}")
+                        add_log(f"  {coin_name}: Preço: ${current_price:,.4f} | Fib 61.8%: ${fib_618:,.4f} | Sl (Topo): ${sl_price:,.4f} | RSI: {rsi_1m:.1f} | EMA200: {ema200:.2f}")
 
                         # Gatilhos + Indicadores
                         # 1. Preço entre Fib 61.8% e o Topo do Swing (max_high)
@@ -276,7 +272,7 @@ def run_fibonacci_strategy(exchange, symbol='MULTI', leverage=10, check_interval
                         # 4. Histograma do MACD indicando que a alta desacelerou
                         if (fib_618 <= current_price < sl_price and 
                             current_price < ema200 and 
-                            rsi_5m >= 50 and 
+                            rsi_1m >= 50 and 
                             macd_hist < 0.05 * current_price):
                             
                             add_log(f"📐 SINAL FIBONACCI SHORT CONFIRMADO em {coin_name}! Entrada em {current_price:,.4f}")

@@ -241,7 +241,7 @@ async function fetchPositions() {
                             <strong>${pnl >= 0 ? '+' : ''}${pnl.toFixed(4)} USDT</strong><br>
                             <span style="font-size:0.75rem">${roi >= 0 ? '+' : ''}${roi.toFixed(2)}%</span>
                         </td>
-                        <td><button class="btn btn-danger" style="padding:0.3rem 0.6rem; font-size:0.75rem; background-color:#333; border:none;" onclick="manualCloseAll()">Mercado</button></td>
+                        <td><button class="btn btn-danger" style="padding:0.3rem 0.6rem; font-size:0.75rem; background-color:#333; border:none;" onclick="manualCloseSymbol('${pos.symbol}')">Mercado</button></td>
                     `;
                     body.appendChild(tr);
                 });
@@ -249,6 +249,23 @@ async function fetchPositions() {
         }
     } catch (error) {
         console.error("Erro ao buscar posições:", error);
+    }
+}
+
+async function manualCloseSymbol(symbol) {
+    if (!confirm(`Tem certeza que deseja fechar a posição de ${symbol} agora?`)) return;
+    
+    try {
+        const response = await fetch('/api/close_symbol', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ symbol: symbol })
+        });
+        const data = await response.json();
+        alert(data.message || data.error);
+        fetchPositions();
+    } catch (error) {
+        alert("Erro ao fechar posição.");
     }
 }
 

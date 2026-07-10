@@ -238,6 +238,38 @@ def close_all():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/close_symbol', methods=['POST'])
+def close_symbol():
+    """Fecha uma posição específica a mercado."""
+    global exchange
+    if not exchange:
+        exchange = get_exchange()
+    try:
+        data = request.get_json() or {}
+        symbol = data.get('symbol')
+        if not symbol:
+            return jsonify({"error": "Símbolo não fornecido"}), 400
+            
+        positions = exchange.fetch_positions(params={'category': 'linear', 'settleCoin': 'USDT'})
+        for p in positions:
+            if p['symbol'] == symbol:
+                contracts = float(p.get('contracts', 0) or 0)
+                if contracts > 0:
+                    close_side = 'sell' if p['side'].lower() == 'long' else 'buy'
+                    exchange.create_order(
+                        symbol=p['symbol'],
+                        type='market',
+                        side=close_side,
+                        amount=contracts,
+                        params={'reduceOnly': True}
+                    )
+                    add_log(f"MANUAL: Posição {p['symbol']} fechada via Dashboard.")
+                    return jsonify({"message": f"Posição de {symbol} fechada com sucesso.", "status": "ok"})
+                    
+        return jsonify({"message": f"Nenhuma posição ativa encontrada para {symbol}.", "status": "error"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/earn/balances')
 def get_earn_balances():
     global exchange
