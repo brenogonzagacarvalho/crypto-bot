@@ -5,7 +5,7 @@ import csv
 from datetime import datetime
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from core.market_data import fetch_ohlcv_data, calculate_rsi, calculate_ema, calculate_macd
+from core.market_data import fetch_ohlcv_data, calculate_rsi, calculate_ema, calculate_macd, calculate_vwap, calculate_atr
 from core.shared_state import bot_state, add_log
 from core.balance_utils import get_unified_balance, get_available_margin_usd, enable_btc_collateral, place_maker_entry, get_closed_pnl
 
@@ -120,7 +120,7 @@ def run_fibonacci_strategy(exchange, symbol='MULTI', leverage=25, check_interval
                         entry_p = float(pos.get('entryPrice') or 0)
                         side = pos['side'].upper()
                         if sym not in active_positions:
-                            active_positions[sym] = {'side': side, 'entry_price': entry_p}
+                            active_positions[sym] = {'side': side, 'entry_price': entry_p, 'entry_time': time.time()}
                             log_trade(sym, 'DETECT', 'ENTRADA', side, entry_p, 0, 0, 0, 0, leverage, 0, 0, collateral_usd, '✅ Posição Detectada')
 
                         unrealized_pnl = float(pos.get('unrealizedPnl') or 0)
@@ -135,6 +135,28 @@ def run_fibonacci_strategy(exchange, symbol='MULTI', leverage=25, check_interval
                         add_log(f"📊 {sym} {side} Aberto:")
                         add_log(f"  💰 Qtd: {contracts}{marg_str}{liq_str}")
                         add_log(f"  💵 PnL: ${unrealized_pnl:+.4f}{roi_str}")
+
+                        # Ajuste de tempo de permanência da posição (sair com algum lucro após 30 min)
+                        if 'entry_time' not in active_positions[sym]:
+                            active_positions[sym]['entry_time'] = time.time()
+
+                        elapsed_minutes = (time.time() - active_positions[sym]['entry_time']) / 60
+                        if elapsed_minutes >= 30:
+                            if unrealized_pnl > 0:
+                                add_log(f"⏰ Posição de {sym} aberta há {elapsed_minutes:.1f} min. Fechando a mercado para garantir lucro possível de ${unrealized_pnl:+.4f}.")
+                                try:
+                                    close_side = 'sell' if side == 'LONG' else 'buy'
+                                    exchange.create_order(
+                                        symbol=sym,
+                                        type='market',
+                                        side=close_side,
+                                        amount=contracts,
+                                        params={'reduceOnly': True}
+                                    )
+                                except Exception as ce:
+                                    add_log(f"❌ Erro ao fechar por tempo limite: {ce}")
+                            else:
+                                add_log(f"⏰ Posição de {sym} aberta há {elapsed_minutes:.1f} min, mas em prejuízo (${unrealized_pnl:+.4f}). Mantendo aberta.")
 
                 # Checa fechamentos
                 closed_symbols = list(set(active_positions.keys()) - current_open_symbols)
@@ -196,8 +218,20 @@ def run_fibonacci_strategy(exchange, symbol='MULTI', leverage=25, check_interval
                     rsi_1m = calculate_rsi(closes_1m, period=14)
                     ema200 = calculate_ema(closes_1m, period=200)
                     macd_line, signal_line, macd_hist = calculate_macd(closes_1m)
+                    vwap = calculate_vwap(ohlcv_1m)
+                    atr = calculate_atr(ohlcv_1m, period=14)
 
-                    if rsi_1m is None or ema200 is None or macd_hist is None: continue
+                    if rsi_1m is None or ema200 is None or macd_hist is None or vwap is None or atr is None: continue
+
+                    # Anatomia do último candle de 1m fechado (evita repintar/falso rompimento)
+                    o_prev = ohlcv_1m['o'][-2]
+                    h_prev = ohlcv_1m['h'][-2]
+                    l_prev = ohlcv_1m['l'][-2]
+                    c_prev = ohlcv_1m['c'][-2]
+                    
+                    body = max(0.0001, abs(c_prev - o_prev))
+                    lower_wick = min(o_prev, c_prev) - l_prev
+                    upper_wick = h_prev - max(o_prev, c_prev)
 
                     # Identifica tipo de Swing e níveis Fib baseado na cronologia
                     if min_low_idx < max_high_idx:
@@ -205,7 +239,9 @@ def run_fibonacci_strategy(exchange, symbol='MULTI', leverage=25, check_interval
                         trend = "ALTA 📈"
                         fib_618 = min_low + 0.618 * diff
                         tp_price = max_high
-                        sl_price = min_low # Fundo do Swing para segurança
+                        
+                        # Stop Loss dinâmico baseado em 2x ATR limitado ao fundo do Swing
+                        sl_price = max(min_low, current_price - 2 * atr)
 
                         # Trava de Stop Loss percentual máxima (1.5%)
                         max_sl_dist = current_price * 0.015
@@ -218,17 +254,20 @@ def run_fibonacci_strategy(exchange, symbol='MULTI', leverage=25, check_interval
                             continue
 
                         # Loga status dos indicadores no scanner
-                        add_log(f"  {coin_name}: Preço: ${current_price:,.4f} | Fib 61.8%: ${fib_618:,.4f} | Sl (Fundo): ${sl_price:,.4f} | RSI: {rsi_1m:.1f} | EMA200: {ema200:.2f}")
+                        add_log(f"  {coin_name}: Preço: ${current_price:,.4f} | Fib 61.8%: ${fib_618:,.4f} | Sl: ${sl_price:,.4f} | VWAP: ${vwap:,.2f} | RSI: {rsi_1m:.1f} | Pavio: {(lower_wick/body):.1f}x")
 
-                        # Gatilhos + Indicadores
-                        # 1. Preço entre Fib 61.8% e o Fundo do Swing (min_low)
-                        # 2. Preço acima da EMA 200 (Tendência de Alta)
+                        # Gatilhos + Indicadores (Confirmação de Fechamento)
+                        # 1. Fechamento anterior entre Fib 61.8% e Stop Loss
+                        # 2. Tendência macro: Fechamento anterior acima da EMA 200 e acima do VWAP
                         # 3. RSI em zona de recuo (<= 50)
                         # 4. Histograma do MACD indicando que a queda desacelerou
-                        if (sl_price < current_price <= fib_618 and 
-                            current_price > ema200 and 
+                        # 5. Pavio inferior de rejeição (exaustão) >= 1.5x o corpo
+                        if (sl_price < c_prev <= fib_618 and 
+                            c_prev > ema200 and 
+                            c_prev > vwap and
                             rsi_1m <= 50 and 
-                            macd_hist > -0.05 * current_price):
+                            macd_hist > -0.05 * c_prev and
+                            lower_wick > body * 1.5):
                             
                             add_log(f"📐 SINAL FIBONACCI LONG CONFIRMADO em {coin_name}! Entrada em {current_price:,.4f}")
                             RISK_PER_TRADE_PCT = 0.01
@@ -241,7 +280,7 @@ def run_fibonacci_strategy(exchange, symbol='MULTI', leverage=25, check_interval
                             try:
                                 _, filled = place_maker_entry(exchange, sym, 'buy', amount, current_price, tp_price_prec, sl_price_prec)
                                 if filled:
-                                    active_positions[sym] = {'side': 'LONG', 'entry_price': current_price}
+                                    active_positions[sym] = {'side': 'LONG', 'entry_price': current_price, 'entry_time': time.time()}
                                     last_trade_swing[sym] = swing_tuple
                                     log_trade(sym, 'ENTRADA', 'LONG', current_price, min_low, max_high, fib_618, sl_price, leverage, tp_price_prec, sl_price_prec, collateral_usd, '✅ SUCESSO', f'RSI: {rsi_1m:.1f}')
                             except Exception as e:
@@ -252,7 +291,9 @@ def run_fibonacci_strategy(exchange, symbol='MULTI', leverage=25, check_interval
                         trend = "BAIXA 📉"
                         fib_618 = max_high - 0.618 * diff
                         tp_price = min_low
-                        sl_price = max_high # Topo do Swing para segurança
+                        
+                        # Stop Loss dinâmico baseado em 2x ATR limitado ao topo do Swing
+                        sl_price = min(max_high, current_price + 2 * atr)
 
                         # Trava de Stop Loss percentual máxima (1.5%)
                         max_sl_dist = current_price * 0.015
@@ -264,17 +305,20 @@ def run_fibonacci_strategy(exchange, symbol='MULTI', leverage=25, check_interval
                             continue
 
                         # Loga status dos indicadores no scanner
-                        add_log(f"  {coin_name}: Preço: ${current_price:,.4f} | Fib 61.8%: ${fib_618:,.4f} | Sl (Topo): ${sl_price:,.4f} | RSI: {rsi_1m:.1f} | EMA200: {ema200:.2f}")
+                        add_log(f"  {coin_name}: Preço: ${current_price:,.4f} | Fib 61.8%: ${fib_618:,.4f} | Sl: ${sl_price:,.4f} | VWAP: ${vwap:,.2f} | RSI: {rsi_1m:.1f} | Pavio: {(upper_wick/body):.1f}x")
 
-                        # Gatilhos + Indicadores
-                        # 1. Preço entre Fib 61.8% e o Topo do Swing (max_high)
-                        # 2. Preço abaixo da EMA 200 (Tendência de Baixa)
+                        # Gatilhos + Indicadores (Confirmação de Fechamento)
+                        # 1. Fechamento anterior entre Fib 61.8% e Stop Loss
+                        # 2. Tendência macro: Fechamento anterior abaixo da EMA 200 e abaixo do VWAP
                         # 3. RSI em zona de recuo (>= 50)
                         # 4. Histograma do MACD indicando que a alta desacelerou
-                        if (fib_618 <= current_price < sl_price and 
-                            current_price < ema200 and 
+                        # 5. Pavio superior de rejeição (exaustão) >= 1.5x o corpo
+                        if (fib_618 <= c_prev < sl_price and 
+                            c_prev < ema200 and 
+                            c_prev < vwap and
                             rsi_1m >= 50 and 
-                            macd_hist < 0.05 * current_price):
+                            macd_hist < 0.05 * c_prev and
+                            upper_wick > body * 1.5):
                             
                             add_log(f"📐 SINAL FIBONACCI SHORT CONFIRMADO em {coin_name}! Entrada em {current_price:,.4f}")
                             RISK_PER_TRADE_PCT = 0.01
@@ -287,9 +331,9 @@ def run_fibonacci_strategy(exchange, symbol='MULTI', leverage=25, check_interval
                             try:
                                 _, filled = place_maker_entry(exchange, sym, 'sell', amount, current_price, tp_price_prec, sl_price_prec)
                                 if filled:
-                                    active_positions[sym] = {'side': 'SHORT', 'entry_price': current_price}
+                                    active_positions[sym] = {'side': 'SHORT', 'entry_price': current_price, 'entry_time': time.time()}
                                     last_trade_swing[sym] = swing_tuple
-                                    log_trade(sym, 'ENTRADA', 'SHORT', current_price, min_low, max_high, fib_618, sl_price, leverage, tp_price_prec, sl_price_prec, collateral_usd, '✅ SUCESSO', f'RSI: {rsi_5m:.1f}')
+                                    log_trade(sym, 'ENTRADA', 'SHORT', current_price, min_low, max_high, fib_618, sl_price, leverage, tp_price_prec, sl_price_prec, collateral_usd, '✅ SUCESSO', f'RSI: {rsi_1m:.1f}')
                             except Exception as e:
                                 add_log(f"❌ Erro de Entrada SHORT: {e}")
 

@@ -6,7 +6,7 @@ import json
 from datetime import datetime
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from core.market_data import fetch_ohlcv_data, calculate_rsi, calculate_ema, calculate_macd
+from core.market_data import fetch_ohlcv_data, calculate_rsi, calculate_ema, calculate_macd, calculate_vwap, calculate_atr
 from core.shared_state import bot_state, add_log
 from core.balance_utils import get_unified_balance, get_available_margin_usd, enable_btc_collateral, place_maker_entry, get_closed_pnl
 
@@ -233,9 +233,20 @@ def run_survival_scalper(exchange, symbol='MULTI'):
                     rsi = calculate_rsi(closes, period=14)
                     ema200 = calculate_ema(closes, period=200)
                     macd, signal, hist = calculate_macd(closes)
+                    vwap = calculate_vwap(ohlcv)
+                    atr = calculate_atr(ohlcv, period=14)
                     
-                    if rsi is None or ema200 is None or hist is None: continue
+                    if rsi is None or ema200 is None or hist is None or vwap is None or atr is None: continue
                     
+                    # Ler anatomia do último candle de 5m fechado para exaustão
+                    o_prev = ohlcv['o'][-2]
+                    h_prev = ohlcv['h'][-2]
+                    l_prev = ohlcv['l'][-2]
+                    c_prev = ohlcv['c'][-2]
+                    body = max(0.0001, abs(c_prev - o_prev))
+                    lower_wick = min(o_prev, c_prev) - l_prev
+                    upper_wick = h_prev - max(o_prev, c_prev)
+
                     bot_state["current_price"] = current_price
                     bot_state["rsi"] = rsi
                     trend = "ALTA 📈" if current_price > ema200 else "BAIXA 📉"
@@ -243,37 +254,45 @@ def run_survival_scalper(exchange, symbol='MULTI'):
                     prev_rsi = rsi_history.get(sym, rsi)
                     rsi_history[sym] = rsi
                     
-                    # GATILHO LONG: Tendência + Sobrevenda + Reversão
+                    # Stop Loss dinâmico por ATR (min 0.3%, max 1.5% do preço de entrada)
+                    dist = 2 * atr
+                    dist = max(current_price * 0.003, min(current_price * 0.015, dist))
+
+                    # GATILHO LONG: Tendência + Sobrevenda + Reversão + VWAP + Rejeição
                     if rsi <= 45 and rsi > prev_rsi: 
-                        add_log(f"🛡️ SINAL LONG DE SOBREVIVÊNCIA em {coin_name}!")
-                        amount_to_buy = (trade_amount * leverage) / current_price
-                        tp_raw = current_price * (1 + (config['take_profit_pct']/100))
-                        sl_raw = current_price * (1 - (config['stop_loss_pct']/100))
-                        tp_price = float(exchange.price_to_precision(sym, tp_raw))
-                        sl_price = float(exchange.price_to_precision(sym, sl_raw))
-                        
-                        try:
-                            order, filled = place_maker_entry(exchange, sym, 'buy', amount_to_buy, current_price, tp_price, sl_price)
-                            if filled:
-                                active_positions[sym] = {'side': 'LONG', 'entry_price': current_price}
-                                log_trade(sym, 'ENTRADA', 'LONG', current_price, rsi, trade_amount, leverage, tp_price, sl_price, collateral_usd, '✅ SUCESSO')
-                        except Exception as e: add_log(f"❌ Erro: {e}")
+                        # Filtros VWAP, Tendência e Pavio de Rejeição de Baixa
+                        if current_price > ema200 and current_price > vwap and lower_wick > body * 1.5:
+                            add_log(f"🛡️ SINAL LONG DE SOBREVIVÊNCIA em {coin_name}!")
+                            amount_to_buy = (trade_amount * leverage) / current_price
+                            sl_raw = current_price - dist
+                            tp_raw = current_price + 3 * dist # Mantém 3:1 dinâmico
+                            tp_price = float(exchange.price_to_precision(sym, tp_raw))
+                            sl_price = float(exchange.price_to_precision(sym, sl_raw))
                             
-                    # GATILHO SHORT: Tendência Baixa + Sobrecompra + Reversão
+                            try:
+                                order, filled = place_maker_entry(exchange, sym, 'buy', amount_to_buy, current_price, tp_price, sl_price)
+                                if filled:
+                                    active_positions[sym] = {'side': 'LONG', 'entry_price': current_price}
+                                    log_trade(sym, 'ENTRADA', 'LONG', current_price, rsi, trade_amount, leverage, tp_price, sl_price, collateral_usd, '✅ SUCESSO')
+                            except Exception as e: add_log(f"❌ Erro: {e}")
+                                
+                    # GATILHO SHORT: Tendência Baixa + Sobrecompra + Reversão + VWAP + Rejeição
                     elif rsi >= 55 and rsi < prev_rsi: 
-                        add_log(f"🛡️ SINAL SHORT DE SOBREVIVÊNCIA em {coin_name}!")
-                        amount_to_sell = (trade_amount * leverage) / current_price
-                        tp_raw = current_price * (1 - (config['take_profit_pct']/100))
-                        sl_raw = current_price * (1 + (config['stop_loss_pct']/100))
-                        tp_price = float(exchange.price_to_precision(sym, tp_raw))
-                        sl_price = float(exchange.price_to_precision(sym, sl_raw))
-                        
-                        try:
-                            order, filled = place_maker_entry(exchange, sym, 'sell', amount_to_sell, current_price, tp_price, sl_price)
-                            if filled:
-                                active_positions[sym] = {'side': 'SHORT', 'entry_price': current_price}
-                                log_trade(sym, 'ENTRADA', 'SHORT', current_price, rsi, trade_amount, leverage, tp_price, sl_price, collateral_usd, '✅ SUCESSO')
-                        except Exception as e: add_log(f"❌ Erro: {e}")
+                        # Filtros VWAP, Tendência e Pavio de Rejeição de Alta
+                        if current_price < ema200 and current_price < vwap and upper_wick > body * 1.5:
+                            add_log(f"🛡️ SINAL SHORT DE SOBREVIVÊNCIA em {coin_name}!")
+                            amount_to_sell = (trade_amount * leverage) / current_price
+                            sl_raw = current_price + dist
+                            tp_raw = current_price - 3 * dist # Mantém 3:1 dinâmico
+                            tp_price = float(exchange.price_to_precision(sym, tp_raw))
+                            sl_price = float(exchange.price_to_precision(sym, sl_raw))
+                            
+                            try:
+                                order, filled = place_maker_entry(exchange, sym, 'sell', amount_to_sell, current_price, tp_price, sl_price)
+                                if filled:
+                                    active_positions[sym] = {'side': 'SHORT', 'entry_price': current_price}
+                                    log_trade(sym, 'ENTRADA', 'SHORT', current_price, rsi, trade_amount, leverage, tp_price, sl_price, collateral_usd, '✅ SUCESSO')
+                            except Exception as e: add_log(f"❌ Erro: {e}")
                         
                     time.sleep(0.5)
             

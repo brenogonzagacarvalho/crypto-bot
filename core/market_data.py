@@ -74,3 +74,52 @@ def calculate_macd(prices, fast=12, slow=26, signal=9):
     histogram = macd_line - signal_line
     
     return macd_line, signal_line, histogram
+
+def calculate_vwap(ohlcv_data):
+    """
+    Calcula o Volume Weighted Average Price (VWAP) com base em dados de OHLCV.
+    Usa o preço típico (High + Low + Close) / 3 de cada vela.
+    """
+    try:
+        highs = ohlcv_data['h']
+        lows = ohlcv_data['l']
+        closes = ohlcv_data['c']
+        volumes = ohlcv_data['v']
+        
+        if not highs or not lows or not closes or not volumes:
+            return None
+            
+        typical_prices = [(h + l + c) / 3 for h, l, c in zip(highs, lows, closes)]
+        
+        total_pv = sum(tp * v for tp, v in zip(typical_prices, volumes))
+        total_v = sum(volumes)
+        
+        return total_pv / total_v if total_v > 0 else None
+    except Exception as e:
+        return None
+
+def calculate_atr(ohlcv_data, period=14):
+    """
+    Calcula o Average True Range (ATR) para medir volatilidade real.
+    """
+    try:
+        highs = ohlcv_data['h']
+        lows = ohlcv_data['l']
+        closes = ohlcv_data['c']
+        
+        if len(closes) < period + 1:
+            return None
+            
+        tr_list = []
+        for i in range(1, len(closes)):
+            tr = max(
+                highs[i] - lows[i],
+                abs(highs[i] - closes[i-1]),
+                abs(lows[i] - closes[i-1])
+            )
+            tr_list.append(tr)
+            
+        # Retorna a média simples (SMA) do True Range no período
+        return sum(tr_list[-period:]) / period
+    except Exception as e:
+        return None

@@ -7,7 +7,7 @@ import pandas as pd
 import numpy as np
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from core.market_data import fetch_ohlcv_data, calculate_rsi, calculate_ema, calculate_macd
+from core.market_data import fetch_ohlcv_data, calculate_rsi, calculate_ema, calculate_macd, calculate_vwap, calculate_atr
 from core.shared_state import bot_state, add_log
 from core.balance_utils import get_unified_balance, get_available_margin_usd, enable_btc_collateral, place_maker_entry, get_closed_pnl
 
@@ -103,23 +103,43 @@ def execute_trend_following(exchange, symbol, current_price, regime, signals, us
         add_log(f"⚠️ Saldo USDT insuficiente para Trend Following ({usdt_balance:.2f} < 2.0).")
         return False
 
+    atr = signals.get('atr')
+    vwap = signals.get('vwap')
+    
+    if atr is None or vwap is None:
+        return False
+
+    # Stop Loss dinâmico por ATR (min 0.4%, max 1.5%)
+    dist = 2 * atr
+    dist = max(current_price * 0.004, min(current_price * 0.015, dist))
+
     trade_size_usd = max(2.0, usdt_balance * RISK_PER_TRADE_PCT * leverage)
     amount   = trade_size_usd / current_price
-    tp_pct   = 0.015
-    sl_pct   = 0.005
 
     if regime == 'UPTREND':
-        tp_price = current_price * (1 + tp_pct)
-        sl_price = current_price * (1 - sl_pct)
-        add_log(f"📈 LONG em {symbol} (UPTREND) | Entrada: {current_price:.2f} TP: {tp_price:.2f} SL: {sl_price:.2f}")
+        # Filtro VWAP
+        if current_price <= vwap:
+            return False
+            
+        sl_price = current_price - dist
+        tp_price = current_price + 3 * dist # Relação 3:1 dinâmica
+        
+        add_log(f"📈 LONG em {symbol} (UPTREND) | Entrada: {current_price:.4f} TP: {tp_price:.4f} SL: {sl_price:.4f}")
         _, filled = place_maker_entry(exchange, symbol, 'buy', amount, current_price, tp_price, sl_price)
         return filled
+        
     elif regime == 'DOWNTREND':
-        tp_price = current_price * (1 - tp_pct)
-        sl_price = current_price * (1 + sl_pct)
-        add_log(f"📉 SHORT em {symbol} (DOWNTREND) | Entrada: {current_price:.2f} TP: {tp_price:.2f} SL: {sl_price:.2f}")
+        # Filtro VWAP
+        if current_price >= vwap:
+            return False
+            
+        sl_price = current_price + dist
+        tp_price = current_price - 3 * dist # Relação 3:1 dinâmica
+        
+        add_log(f"📉 SHORT em {symbol} (DOWNTREND) | Entrada: {current_price:.4f} TP: {tp_price:.4f} SL: {sl_price:.4f}")
         _, filled = place_maker_entry(exchange, symbol, 'sell', amount, current_price, tp_price, sl_price)
         return filled
+        
     return False
 
 # --- ESTRATÉGIA DE MEAN REVERSION ---
@@ -130,24 +150,46 @@ def execute_mean_reversion(exchange, symbol, current_price, regime, signals, usd
         add_log(f"⚠️ Saldo USDT insuficiente para Mean Reversion ({usdt_balance:.2f} < 2.0).")
         return False
 
+    atr = signals.get('atr')
+    lower_wick = signals.get('lower_wick')
+    upper_wick = signals.get('upper_wick')
+    body = signals.get('body')
+
+    if atr is None or lower_wick is None or upper_wick is None or body is None:
+        return False
+
+    # Stop Loss dinâmico por ATR (min 0.25%, max 0.75%)
+    dist = 2 * atr
+    dist = max(current_price * 0.0025, min(current_price * 0.0075, dist))
+
     trade_size_usd = max(2.0, usdt_balance * RISK_PER_TRADE_PCT * leverage)
     amount = trade_size_usd / current_price
-    tp_pct = 0.0075
-    sl_pct = 0.0025
 
     rsi = signals.get('rsi')
     if rsi is not None and rsi < 30:
-        tp_price = current_price * (1 + tp_pct)
-        sl_price = current_price * (1 - sl_pct)
-        add_log(f"🔄 COMPRA em {symbol} (RANGE - RSI Sobrevendido {rsi:.1f}) | TP: {tp_price:.2f} SL: {sl_price:.2f}")
+        # Filtro de Pavio de Rejeição de Baixa
+        if lower_wick < body * 1.5:
+            return False
+            
+        sl_price = current_price - dist
+        tp_price = current_price + 3 * dist # Relação 3:1 dinâmica
+        
+        add_log(f"🔄 COMPRA em {symbol} (RANGE - RSI {rsi:.1f} e Rejeição) | TP: {tp_price:.4f} SL: {sl_price:.4f}")
         _, filled = place_maker_entry(exchange, symbol, 'buy', amount, current_price, tp_price, sl_price)
         return filled
+        
     elif rsi is not None and rsi > 70:
-        tp_price = current_price * (1 - tp_pct)
-        sl_price = current_price * (1 + sl_pct)
-        add_log(f"🔄 VENDA em {symbol} (RANGE - RSI Sobrecomprado {rsi:.1f}) | TP: {tp_price:.2f} SL: {sl_price:.2f}")
+        # Filtro de Pavio de Rejeição de Alta
+        if upper_wick < body * 1.5:
+            return False
+            
+        sl_price = current_price + dist
+        tp_price = current_price - 3 * dist # Relação 3:1 dinâmica
+        
+        add_log(f"🔄 VENDA em {symbol} (RANGE - RSI {rsi:.1f} e Rejeição) | TP: {tp_price:.4f} SL: {sl_price:.4f}")
         _, filled = place_maker_entry(exchange, symbol, 'sell', amount, current_price, tp_price, sl_price)
         return filled
+        
     return False
 
 # --- LOOP PRINCIPAL DA ESTRATÉGIA CAMALEÃO ---
@@ -340,13 +382,34 @@ def run_chameleon_strategy(exchange, symbol='BTC/USDT:USDT', leverage=10, check_
                     rsi           = calculate_rsi(closes_5m, period=14)
                     ema200        = calculate_ema(closes_5m, period=200)
                     _, _, hist    = calculate_macd(closes_5m)
+                    vwap          = calculate_vwap(ohlcv_5m)
+                    atr           = calculate_atr(ohlcv_5m, period=14)
                     
-                    if rsi is None or ema200 is None or hist is None: continue
+                    if rsi is None or ema200 is None or hist is None or vwap is None or atr is None: continue
+                    
+                    # Ler anatomia do último candle de 5m fechado para exaustão no modo range
+                    o_prev = ohlcv_5m['o'][-2]
+                    h_prev = ohlcv_5m['h'][-2]
+                    l_prev = ohlcv_5m['l'][-2]
+                    c_prev = ohlcv_5m['c'][-2]
+                    body = max(0.0001, abs(c_prev - o_prev))
+                    lower_wick = min(o_prev, c_prev) - l_prev
+                    upper_wick = h_prev - max(o_prev, c_prev)
                     
                     bot_state["current_price"] = current_price
                     bot_state["rsi"]           = rsi
                     
-                    signals = {'rsi': rsi, 'ema200': ema200, 'macd_hist': hist, 'current_price': current_price}
+                    signals = {
+                        'rsi': rsi, 
+                        'ema200': ema200, 
+                        'macd_hist': hist, 
+                        'current_price': current_price,
+                        'vwap': vwap,
+                        'atr': atr,
+                        'lower_wick': lower_wick,
+                        'upper_wick': upper_wick,
+                        'body': body
+                    }
                     
                     log_trade(sym, regime_atual, 'SCAN', '-', current_price, rsi, ema200, hist, leverage, 0, collateral_usd, bot_state["status"], str(signals))
                     
