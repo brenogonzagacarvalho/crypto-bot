@@ -6,7 +6,7 @@ from datetime import datetime
 import pandas as pd
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from core.market_data import fetch_ohlcv_data, calculate_atr
+from core.market_data import fetch_ohlcv_data, calculate_atr, calculate_ema
 from core.shared_state import bot_state, add_log
 from core.balance_utils import get_available_margin_usd, enable_btc_collateral, get_closed_pnl
 
@@ -46,7 +46,7 @@ def run_daily_range_strategy(exchange, symbol='MULTI', leverage=20, check_interv
     init_trade_log()
 
     is_multi = (symbol == "MULTI")
-    symbols_to_scan = ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT", "XRP/USDT:USDT", "ADA/USDT:USDT", "DOGE/USDT:USDT"] if is_multi else [symbol]
+    symbols_to_scan = ["ETH/USDT:USDT", "SOL/USDT:USDT", "XRP/USDT:USDT", "ADA/USDT:USDT", "DOGE/USDT:USDT"] if is_multi else [symbol]
 
     add_log(f"{'='*55}")
     add_log(f"📐 ESTRATÉGIA MÍNIMA/MÁXIMA DIÁRIA (YHL) — {'MULTI-SCAN' if is_multi else symbol}")
@@ -168,6 +168,21 @@ def run_daily_range_strategy(exchange, symbol='MULTI', leverage=20, check_interv
             # --- RASTREAMENTO E RENOVAÇÃO DE ORDENS LIMITE ---
             add_log(f"── Scanner #{scan_count} | Ativas: {len(active_positions)} | Ordens Livro: {len(active_limit_orders)} | Saldo: ${collateral_usd:.2f} ──")
             
+            # Limita a apenas 1 operação ativa por vez (apenas uma mão ativa)
+            if len(active_positions) >= 1:
+                # Se já temos uma posição ativa, limpa as outras ordens do livro para liberar saldo
+                for s in symbols_to_scan:
+                    if s not in active_positions and s in active_limit_orders:
+                        try:
+                            order_id = active_limit_orders[s]['order_id']
+                            exchange.cancel_order(order_id, s)
+                            add_log(f"🧹 Mantendo apenas 1 mão ativa: Cancelada ordem pendente em {s}.")
+                        except:
+                            pass
+                        del active_limit_orders[s]
+                time.sleep(check_interval)
+                continue
+            
             for sym in symbols_to_scan:
                 if not bot_state["is_running"]: break
                 if sym in active_positions: continue
@@ -222,6 +237,13 @@ def run_daily_range_strategy(exchange, symbol='MULTI', leverage=20, check_interv
                     # Index -2 é o dia de ontem completo
                     yesterday_high = ohlcv_1d['h'][-2]
                     yesterday_low = ohlcv_1d['l'][-2]
+                    yesterday_close = ohlcv_1d['c'][-2]
+                    
+                    # Filtro de Tendência Diária (Média Móvel Exponencial EMA 50)
+                    ema50_1d = calculate_ema(ohlcv_1d['c'], period=50)
+                    if ema50_1d is not None and yesterday_close < ema50_1d:
+                        add_log(f"⚠️ {sym} em tendência diária de baixa (Fechamento ontem ${yesterday_close:.4f} < EMA50 ${ema50_1d:.4f}). Pulando para segurança.")
+                        continue
                     
                     atr_1d = calculate_atr(ohlcv_1d, period=14)
                     if atr_1d is None:
@@ -229,13 +251,9 @@ def run_daily_range_strategy(exchange, symbol='MULTI', leverage=20, check_interv
 
                     # Preços calculados
                     entry_price = yesterday_low * 1.0005  # margem de 0.05% acima para garantir toque
-                    tp_price = yesterday_high * 0.9995    # margem de 0.05% abaixo para garantir execução
                     
-                    # Garante alvo de lucro mínimo de 10% ROI na margem (10% / alavancagem em % de preço)
-                    min_tp_price = entry_price * (1 + 0.10 / leverage)
-                    if tp_price < min_tp_price:
-                        tp_price = min_tp_price
-
+                    # Alvo fixo de 2% de alta em relação ao preço de entrada (preço de compra)
+                    tp_price = entry_price * 1.02
                     sl_price = entry_price - (1.5 * atr_1d)
 
                     # Formata precisões
@@ -249,7 +267,7 @@ def run_daily_range_strategy(exchange, symbol='MULTI', leverage=20, check_interv
 
                     add_log(f"📈 Níveis calculados para {sym}:")
                     add_log(f"   Mínima Ontem (Low): ${yesterday_low:.4f} | Máxima Ontem (High): ${yesterday_high:.4f}")
-                    add_log(f"   🎯 COMPRA LIMITE: ${entry_price:.4f} | ALVO TP (Mín 10% ROI): ${tp_price:.4f} | STOP LOSS: DESATIVADO")
+                    add_log(f"   🎯 COMPRA LIMITE: ${entry_price:.4f} | ALVO TP (Fixo 2% Preço): ${tp_price:.4f} | STOP LOSS: DESATIVADO")
 
                     # Verifica ticker atual
                     try:
@@ -258,11 +276,11 @@ def run_daily_range_strategy(exchange, symbol='MULTI', leverage=20, check_interv
                     except:
                         current_price = entry_price
 
-                    # Calcula quantidade da ordem (10% do saldo total da conta * alavancagem)
+                    # Margem alocada por operação: 10% do saldo total (Juros Compostos)
                     margin_allocated = collateral_usd * 0.10
                     # Proteção básica de saldo
-                    if margin_allocated < 2.0:
-                        margin_allocated = min(2.0, collateral_usd)
+                    if margin_allocated < 1.0:
+                        margin_allocated = min(1.0, collateral_usd)
                         
                     trade_size_usd = margin_allocated * leverage
                     amount = trade_size_usd / entry_price
