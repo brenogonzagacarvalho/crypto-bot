@@ -665,7 +665,7 @@ def get_history():
                     
                     moeda = row.get('Moeda') or row.get('Symbol') or '-'
                     direcao = row.get('Direção') or row.get('Side') or '-'
-                    preco = row.get('Preço') or row.get('Entry_Price') or '-'
+                    preco = row.get('Preço Executado') or row.get('Preço') or row.get('Entry_Price') or '-'
                     valor = row.get('Valor ($)') or row.get('Quantidade') or row.get('Tamanho $') or row.get('Size') or '-'
                     status = row.get('Status') or '-'
                     detalhes = row.get('Detalhes') or row.get('Reason') or '-'
@@ -727,7 +727,7 @@ def start_bot():
     strategy = data.get('strategy', 'spot')
     symbol = data.get('symbol', 'BTC/USDT:USDT')
     
-    estrategias_multi = ['survival', 'reverse_martingale', 'scalping_10x', 'sniper', 'chameleon', 'fibonacci']
+    estrategias_multi = ['survival', 'reverse_martingale', 'scalping_10x', 'sniper', 'chameleon', 'fibonacci', 'daily_range', 'ema_rsi', 'vwap_deviation']
     if symbol == 'MULTI' and strategy not in estrategias_multi:
         add_log(f"⚠️ A estratégia '{strategy}' não suporta MULTI. Usando BTC por padrão.")
         symbol = 'BTC/USDT:USDT'
@@ -781,6 +781,18 @@ def start_bot():
             symbol = symbol.split('/')[0] + '/USDT:USDT'
         add_log(f"Comando de INICIAR MÍNIMA/MÁXIMA DIÁRIA recebido para {symbol}...")
         thread = threading.Thread(target=run_daily_range_strategy, args=(exchange, symbol))
+    elif strategy == 'ema_rsi':
+        from strategies.ema_rsi_scalper import run_ema_rsi_strategy
+        if symbol != 'MULTI' and ':' not in symbol:
+            symbol = symbol.split('/')[0] + '/USDT:USDT'
+        add_log(f"Comando de INICIAR EMA CROSS + RSI SCALPER recebido para {symbol}...")
+        thread = threading.Thread(target=run_ema_rsi_strategy, args=(exchange, symbol))
+    elif strategy == 'vwap_deviation':
+        from strategies.vwap_deviation_scalper import run_vwap_deviation_strategy
+        if symbol != 'MULTI' and ':' not in symbol:
+            symbol = symbol.split('/')[0] + '/USDT:USDT'
+        add_log(f"Comando de INICIAR VWAP DEVIATION SCALPER recebido para {symbol}...")
+        thread = threading.Thread(target=run_vwap_deviation_strategy, args=(exchange, symbol))
     else:
         add_log(f"Comando de INICIAR SPOT recebido para {symbol}...")
         thread = threading.Thread(target=run_live_predictor, args=(exchange, symbol))

@@ -41,6 +41,14 @@ function updateUI(data) {
             badge.style.borderColor = "#06b6d4";
             badge.style.color = "#06b6d4";
             badge.style.boxShadow = "0 0 10px rgba(6,182,212,0.4)";
+        } else if(data.status.includes('EMA/RSI')) {
+            badge.style.borderColor = "#c084fc";
+            badge.style.color = "#c084fc";
+            badge.style.boxShadow = "0 0 10px rgba(192,132,252,0.4)";
+        } else if(data.status.includes('VWAP Dev')) {
+            badge.style.borderColor = "#38bdf8";
+            badge.style.color = "#38bdf8";
+            badge.style.boxShadow = "0 0 10px rgba(56,189,248,0.4)";
         } else if(data.status.includes('Scalping (10x)')) {
             badge.style.borderColor = "#10b981";
             badge.style.color = "#10b981";
@@ -127,12 +135,12 @@ function updateUI(data) {
 async function startBot(strategyType = 'spot') {
     const selectedCoin = document.getElementById('coin-selector').value;
     
-    if (selectedCoin === "MULTI" && strategyType !== "scalping_10x" && strategyType !== "reverse_martingale" && strategyType !== "sniper" && strategyType !== "survival" && strategyType !== "chameleon" && strategyType !== "fibonacci" && strategyType !== "daily_range") {
-        alert("O modo Scanner MULTI está disponível apenas nas estratégias: Survival Scalper, Scalping 10x, Reverse Martingale, Alavancagem Sniper, Camaleão, Retração Fibonacci e Mínima/Máxima Diária.");
+    if (selectedCoin === "MULTI" && strategyType !== "scalping_10x" && strategyType !== "reverse_martingale" && strategyType !== "sniper" && strategyType !== "survival" && strategyType !== "chameleon" && strategyType !== "fibonacci" && strategyType !== "daily_range" && strategyType !== "ema_rsi" && strategyType !== "vwap_deviation") {
+        alert("O modo Scanner MULTI está disponível apenas nas estratégias: Survival Scalper, Scalping 10x, Reverse Martingale, Alavancagem Sniper, Camaleão, Retração Fibonacci, Mínima/Máxima Diária, EMA Cross + RSI e VWAP Deviation.");
         return;
     }
     
-    const isDerivatives = strategyType === 'sniper' || strategyType === 'martingale' || strategyType === 'trend' || strategyType === 'reverse_martingale' || strategyType === 'scalping_10x' || strategyType === 'survival' || strategyType === 'longshort_lev' || strategyType === 'double7' || strategyType === 'chameleon' || strategyType === 'fibonacci' || strategyType === 'daily_range';
+    const isDerivatives = strategyType === 'sniper' || strategyType === 'martingale' || strategyType === 'trend' || strategyType === 'reverse_martingale' || strategyType === 'scalping_10x' || strategyType === 'survival' || strategyType === 'longshort_lev' || strategyType === 'double7' || strategyType === 'chameleon' || strategyType === 'fibonacci' || strategyType === 'daily_range' || strategyType === 'ema_rsi' || strategyType === 'vwap_deviation';
     
     let symbol = "";
     if (selectedCoin === "MULTI") {
@@ -213,8 +221,9 @@ async function fetchPositions() {
             } else {
                 data.positions.forEach(pos => {
                     const tr = document.createElement('tr');
-                    const isLong = pos.side.toLowerCase() === 'long';
+                    const isLong = pos.side.toLowerCase() === 'long' || pos.side.toLowerCase() === 'buy';
                     const sideColor = isLong ? 'var(--crypto-green)' : 'var(--crypto-red)';
+                    const sideLabel = isLong ? 'LONG 🟢' : 'SHORT 🔴';
                     const pnl = parseFloat(pos.unrealizedPnl);
                     const pnlClass = pnl >= 0 ? 'pnl-positive' : 'pnl-negative';
                     
@@ -228,7 +237,7 @@ async function fetchPositions() {
                             <a href="https://www.bybit.com/en/trade/spot/${baseCoin}/${quoteCoin}" target="_blank" class="position-link" title="Ver gráfico de ${baseCoin}/${quoteCoin} na Bybit">
                                 <strong>${symbolLabel} Perpétuos 🔗</strong>
                             </a><br>
-                            <span style="font-size:0.75rem; color:${sideColor}">Cruzar ${pos.leverage}.00x</span>
+                            <span style="font-size:0.75rem; color:${sideColor}">${sideLabel} | Cruzar ${pos.leverage}.00x</span>
                         </td>
                         <td><span style="color:${sideColor}">${pos.contracts} ${baseCoin}</span></td>
                         <td><strong>${parseFloat(pos.positionValue || 0).toFixed(2)} USDT</strong></td>
@@ -314,13 +323,19 @@ async function fetchHistory() {
                         tipoHTML = trade.tipo || '-';
                     }
                     
+                    let precoHTML = '-';
+                    if (trade.preco && trade.preco !== '-' && !isNaN(parseFloat(trade.preco))) {
+                        const parsedPrice = parseFloat(trade.preco);
+                        precoHTML = `$${parsedPrice.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 4})}`;
+                    }
+
                     tr.innerHTML = `
                         <td>${trade.data}</td>
                         <td>${trade.estrategia}</td>
                         <td>${tipoHTML}</td>
                         <td><strong>${trade.moeda}</strong></td>
                         <td class="${direcaoClass}">${trade.direcao}</td>
-                        <td>$${parseFloat(trade.preco).toFixed(2)}</td>
+                        <td>${precoHTML}</td>
                         <td>${trade.status}</td>
                         <td>${lucroHTML}</td>
                     `;

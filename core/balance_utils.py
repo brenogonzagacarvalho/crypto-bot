@@ -184,3 +184,29 @@ def get_closed_pnl(exchange, symbol, limit=1):
         from core.shared_state import add_log
         add_log(f"⚠️ Erro ao buscar PnL fechado: {e}")
     return 0.0
+
+def get_closed_pnl_details(exchange, symbol):
+    """
+    Busca os detalhes exatos da última posição fechada (incluindo preço de entrada, saída e PnL).
+    """
+    try:
+        market = exchange.market(symbol)
+        bybit_symbol = market['id'] if market else symbol.replace('/', '').split(':')[0]
+        
+        resp = exchange.privateGetV5PositionClosedPnl({
+            'category': 'linear',
+            'symbol': bybit_symbol,
+            'limit': 1
+        })
+        closed_list = resp.get('result', {}).get('list', [])
+        if closed_list:
+            item = closed_list[0]
+            return {
+                'pnl': float(item.get('closedPnl') or 0),
+                'exit_price': float(item.get('avgExitPrice') or 0),
+                'entry_price': float(item.get('avgEntryPrice') or 0)
+            }
+    except Exception as e:
+        from core.shared_state import add_log
+        add_log(f"⚠️ Erro ao buscar detalhes do PnL fechado: {e}")
+    return {'pnl': 0.0, 'exit_price': 0.0, 'entry_price': 0.0}

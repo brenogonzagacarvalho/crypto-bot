@@ -8,7 +8,7 @@ import pandas as pd
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.market_data import fetch_ohlcv_data, calculate_atr, calculate_ema
 from core.shared_state import bot_state, add_log
-from core.balance_utils import get_available_margin_usd, enable_btc_collateral, get_closed_pnl
+from core.balance_utils import get_available_margin_usd, enable_btc_collateral, get_closed_pnl, get_closed_pnl_details
 
 # --- SISTEMA DE LOG EM CSV ---
 LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'logs')
@@ -59,8 +59,13 @@ def run_daily_range_strategy(exchange, symbol='MULTI', leverage=20, check_interv
 
     enable_btc_collateral(exchange)
 
-    # Configura alavancagem para as moedas
+    # Configura alavancagem e margem isolada para as moedas
     for sym in symbols_to_scan:
+        try:
+            exchange.set_margin_mode('isolated', sym)
+            add_log(f"Margem configurada para ISOLADA em {sym}!")
+        except Exception as e:
+            pass
         try:
             exchange.set_leverage(leverage, sym)
             add_log(f"Alavancagem setada para {leverage}x em {sym}!")
@@ -153,12 +158,15 @@ def run_daily_range_strategy(exchange, symbol='MULTI', leverage=20, check_interv
                 for sym in closed_symbols:
                     new_collateral_usd, _ = get_available_margin_usd(exchange)
                     time.sleep(3) # tempo para Bybit registrar o fechamento
-                    resultado = get_closed_pnl(exchange, sym, limit=1)
+                    details = get_closed_pnl_details(exchange, sym)
+                    resultado = details['pnl']
+                    exit_price = details['exit_price']
+                    
                     resultado_emoji = "🏆 LUCRO" if resultado > 0 else "💀 LOSS"
                     resultado_str = f"{'+$' if resultado >= 0 else '-$'}{abs(resultado):.4f}"
                     
-                    add_log(f"🚪 Posição fechada em {sym}! PnL: {resultado_str} {resultado_emoji}")
-                    log_trade(sym, 'SAÍDA', active_positions[sym]['side'], None, None, None, None, leverage, None, None, new_collateral_usd, resultado_emoji, f"Fechamento: {resultado_str}")
+                    add_log(f"🚪 Posição fechada em {sym}! PnL: {resultado_str} {resultado_emoji} | Preço de Saída: ${exit_price:.4f}")
+                    log_trade(sym, 'SAÍDA', active_positions[sym]['side'], exit_price, None, None, None, leverage, None, None, new_collateral_usd, resultado_emoji, f"Fechamento: {resultado_str}")
                     del active_positions[sym]
                     collateral_usd = new_collateral_usd
 
@@ -252,8 +260,8 @@ def run_daily_range_strategy(exchange, symbol='MULTI', leverage=20, check_interv
                     # Preços calculados
                     entry_price = yesterday_low * 1.0005  # margem de 0.05% acima para garantir toque
                     
-                    # Alvo fixo de 2% de alta em relação ao preço de entrada (preço de compra)
-                    tp_price = entry_price * 1.02
+                    # Alvo fixo de 10% de ROI sobre a margem investida (10% / alavancagem em % de preço)
+                    tp_price = entry_price * (1 + 0.10 / leverage)
                     sl_price = entry_price - (1.5 * atr_1d)
 
                     # Formata precisões
@@ -267,7 +275,7 @@ def run_daily_range_strategy(exchange, symbol='MULTI', leverage=20, check_interv
 
                     add_log(f"📈 Níveis calculados para {sym}:")
                     add_log(f"   Mínima Ontem (Low): ${yesterday_low:.4f} | Máxima Ontem (High): ${yesterday_high:.4f}")
-                    add_log(f"   🎯 COMPRA LIMITE: ${entry_price:.4f} | ALVO TP (Fixo 2% Preço): ${tp_price:.4f} | STOP LOSS: DESATIVADO")
+                    add_log(f"   🎯 COMPRA LIMITE: ${entry_price:.4f} | ALVO TP (10% ROI): ${tp_price:.4f} | STOP LOSS: DESATIVADO")
 
                     # Verifica ticker atual
                     try:
