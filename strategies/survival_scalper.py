@@ -254,6 +254,10 @@ def run_survival_scalper(exchange, symbol='MULTI'):
                     prev_rsi = rsi_history.get(sym, rsi)
                     rsi_history[sym] = rsi
                     
+                    # Loga os dados analisados para o Live Terminal
+                    wick_ratio = (lower_wick / body) if current_price > ema200 else (upper_wick / body)
+                    add_log(f"  {coin_name}: Preço: ${current_price:,.4f} | RSI: {rsi:.1f} (Ant: {prev_rsi:.1f}) | EMA200: ${ema200:,.4f} | VWAP: ${vwap:,.4f} | Pavio: {wick_ratio:.1f}x | Trend: {trend}")
+
                     # Stop Loss dinâmico por ATR (min 0.3%, max 1.5% do preço de entrada)
                     dist = 2 * atr
                     dist = max(current_price * 0.003, min(current_price * 0.015, dist))

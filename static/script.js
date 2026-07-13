@@ -216,11 +216,14 @@ async function fetchPositions() {
                     
                     const roi = pos.percentage ? parseFloat(pos.percentage) : 0;
                     const baseCoin = pos.symbol.split('/')[0];
+                    const quoteCoin = pos.symbol.includes('/') ? pos.symbol.split('/')[1].split(':')[0] : 'USDT';
                     const symbolLabel = pos.symbol.replace(':USDT', '').replace('/', '');
                     
                     tr.innerHTML = `
                         <td>
-                            <strong>${symbolLabel} Perpétuos</strong><br>
+                            <a href="https://www.bybit.com/en/trade/spot/${baseCoin}/${quoteCoin}" target="_blank" class="position-link" title="Ver gráfico de ${baseCoin}/${quoteCoin} na Bybit">
+                                <strong>${symbolLabel} Perpétuos 🔗</strong>
+                            </a><br>
                             <span style="font-size:0.75rem; color:${sideColor}">Cruzar ${pos.leverage}.00x</span>
                         </td>
                         <td><span style="color:${sideColor}">${pos.contracts} ${baseCoin}</span></td>

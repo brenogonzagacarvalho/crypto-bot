@@ -237,7 +237,8 @@ def run_fibonacci_strategy(exchange, symbol='MULTI', leverage=25, check_interval
                     if min_low_idx < max_high_idx:
                         # Swing Bullish (Uptrend) -> Procuramos LONG na retração
                         trend = "ALTA 📈"
-                        fib_618 = min_low + 0.618 * diff
+                        fib_618 = max_high - 0.618 * diff
+                        fib_786 = max_high - 0.786 * diff
                         tp_price = max_high
                         
                         # Stop Loss dinâmico baseado em 2x ATR limitado ao fundo do Swing
@@ -254,15 +255,15 @@ def run_fibonacci_strategy(exchange, symbol='MULTI', leverage=25, check_interval
                             continue
 
                         # Loga status dos indicadores no scanner
-                        add_log(f"  {coin_name}: Preço: ${current_price:,.4f} | Fib 61.8%: ${fib_618:,.4f} | Sl: ${sl_price:,.4f} | VWAP: ${vwap:,.2f} | RSI: {rsi_1m:.1f} | Pavio: {(lower_wick/body):.1f}x")
+                        add_log(f"  {coin_name}: Preço: ${current_price:,.4f} | Fib 61.8%: ${fib_618:,.4f} | Fib 78.6%: ${fib_786:,.4f} | Sl: ${sl_price:,.4f} | VWAP: ${vwap:,.2f} | RSI: {rsi_1m:.1f} | Pavio: {(lower_wick/body):.1f}x")
 
                         # Gatilhos + Indicadores (Confirmação de Fechamento)
-                        # 1. Fechamento anterior entre Fib 61.8% e Stop Loss
+                        # 1. Fechamento anterior dentro do Golden Pocket (entre 61.8% e 78.6%)
                         # 2. Tendência macro: Fechamento anterior acima da EMA 200 e acima do VWAP
                         # 3. RSI em zona de recuo (<= 50)
                         # 4. Histograma do MACD indicando que a queda desacelerou
                         # 5. Pavio inferior de rejeição (exaustão) >= 1.5x o corpo
-                        if (sl_price < c_prev <= fib_618 and 
+                        if (fib_786 <= c_prev <= fib_618 and 
                             c_prev > ema200 and 
                             c_prev > vwap and
                             rsi_1m <= 50 and 
@@ -282,14 +283,15 @@ def run_fibonacci_strategy(exchange, symbol='MULTI', leverage=25, check_interval
                                 if filled:
                                     active_positions[sym] = {'side': 'LONG', 'entry_price': current_price, 'entry_time': time.time()}
                                     last_trade_swing[sym] = swing_tuple
-                                    log_trade(sym, 'ENTRADA', 'LONG', current_price, min_low, max_high, fib_618, sl_price, leverage, tp_price_prec, sl_price_prec, collateral_usd, '✅ SUCESSO', f'RSI: {rsi_1m:.1f}')
+                                    log_trade(sym, 'ENTRADA', 'LONG', current_price, min_low, max_high, fib_618, fib_786, leverage, tp_price_prec, sl_price_prec, collateral_usd, '✅ SUCESSO', f'RSI: {rsi_1m:.1f}')
                             except Exception as e:
                                 add_log(f"❌ Erro de Entrada LONG: {e}")
 
                     else:
                         # Swing Bearish (Downtrend) -> Procuramos SHORT na retração
                         trend = "BAIXA 📉"
-                        fib_618 = max_high - 0.618 * diff
+                        fib_618 = min_low + 0.618 * diff
+                        fib_786 = min_low + 0.786 * diff
                         tp_price = min_low
                         
                         # Stop Loss dinâmico baseado em 2x ATR limitado ao topo do Swing
@@ -305,15 +307,15 @@ def run_fibonacci_strategy(exchange, symbol='MULTI', leverage=25, check_interval
                             continue
 
                         # Loga status dos indicadores no scanner
-                        add_log(f"  {coin_name}: Preço: ${current_price:,.4f} | Fib 61.8%: ${fib_618:,.4f} | Sl: ${sl_price:,.4f} | VWAP: ${vwap:,.2f} | RSI: {rsi_1m:.1f} | Pavio: {(upper_wick/body):.1f}x")
+                        add_log(f"  {coin_name}: Preço: ${current_price:,.4f} | Fib 61.8%: ${fib_618:,.4f} | Fib 78.6%: ${fib_786:,.4f} | Sl: ${sl_price:,.4f} | VWAP: ${vwap:,.2f} | RSI: {rsi_1m:.1f} | Pavio: {(upper_wick/body):.1f}x")
 
                         # Gatilhos + Indicadores (Confirmação de Fechamento)
-                        # 1. Fechamento anterior entre Fib 61.8% e Stop Loss
+                        # 1. Fechamento anterior dentro do Golden Pocket (entre 61.8% e 78.6%)
                         # 2. Tendência macro: Fechamento anterior abaixo da EMA 200 e abaixo do VWAP
                         # 3. RSI em zona de recuo (>= 50)
                         # 4. Histograma do MACD indicando que a alta desacelerou
                         # 5. Pavio superior de rejeição (exaustão) >= 1.5x o corpo
-                        if (fib_618 <= c_prev < sl_price and 
+                        if (fib_618 <= c_prev <= fib_786 and 
                             c_prev < ema200 and 
                             c_prev < vwap and
                             rsi_1m >= 50 and 
@@ -333,7 +335,7 @@ def run_fibonacci_strategy(exchange, symbol='MULTI', leverage=25, check_interval
                                 if filled:
                                     active_positions[sym] = {'side': 'SHORT', 'entry_price': current_price, 'entry_time': time.time()}
                                     last_trade_swing[sym] = swing_tuple
-                                    log_trade(sym, 'ENTRADA', 'SHORT', current_price, min_low, max_high, fib_618, sl_price, leverage, tp_price_prec, sl_price_prec, collateral_usd, '✅ SUCESSO', f'RSI: {rsi_1m:.1f}')
+                                    log_trade(sym, 'ENTRADA', 'SHORT', current_price, min_low, max_high, fib_618, fib_786, leverage, tp_price_prec, sl_price_prec, collateral_usd, '✅ SUCESSO', f'RSI: {rsi_1m:.1f}')
                             except Exception as e:
                                 add_log(f"❌ Erro de Entrada SHORT: {e}")
 

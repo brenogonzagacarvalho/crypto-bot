@@ -193,7 +193,7 @@ def execute_mean_reversion(exchange, symbol, current_price, regime, signals, usd
     return False
 
 # --- LOOP PRINCIPAL DA ESTRATÉGIA CAMALEÃO ---
-def run_chameleon_strategy(exchange, symbol='BTC/USDT:USDT', leverage=10, check_interval=60):
+def run_chameleon_strategy(exchange, symbol='BTC/USDT:USDT', leverage=30, check_interval=60):
     init_trade_log()
 
     is_multi = (symbol == "MULTI")

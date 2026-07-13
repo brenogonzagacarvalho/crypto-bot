@@ -314,3 +314,25 @@ td {
     box-shadow: 0 0 10px rgba(20, 184, 166, 0.3) !important;
 }
 
+/* --- Links para Ativos nas Posições --- */
+.position-link {
+    color: var(--text-primary);
+    text-decoration: none;
+    transition: color 0.2s ease;
+}
+
+.position-link:hover {
+    color: var(--crypto-green);
+    text-shadow: 0 0 8px var(--crypto-green-glow);
+}
+
+.position-link strong {
+    border-bottom: 1px dotted rgba(255, 255, 255, 0.3);
+    transition: border-bottom-color 0.2s ease;
+}
+
+.position-link:hover strong {
+    border-bottom-color: var(--crypto-green);
+}
+
+
