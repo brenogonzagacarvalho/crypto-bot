@@ -774,6 +774,13 @@ def start_bot():
             symbol = symbol.split('/')[0] + '/USDT:USDT'
         add_log(f"Comando de INICIAR FIBONACCI recebido para {symbol}...")
         thread = threading.Thread(target=run_fibonacci_strategy, args=(exchange, symbol))
+    elif strategy == 'daily_range':
+        from strategies.daily_range_scalper import run_daily_range_strategy
+        # Garante formato linear perpetual (ex: ETH/USDT -> ETH/USDT:USDT)
+        if symbol != 'MULTI' and ':' not in symbol:
+            symbol = symbol.split('/')[0] + '/USDT:USDT'
+        add_log(f"Comando de INICIAR MÍNIMA/MÁXIMA DIÁRIA recebido para {symbol}...")
+        thread = threading.Thread(target=run_daily_range_strategy, args=(exchange, symbol))
     else:
         add_log(f"Comando de INICIAR SPOT recebido para {symbol}...")
         thread = threading.Thread(target=run_live_predictor, args=(exchange, symbol))

@@ -37,6 +37,10 @@ function updateUI(data) {
             badge.style.borderColor = "#ef4444";
             badge.style.color = "#ef4444";
             badge.style.boxShadow = "0 0 10px rgba(239,68,68,0.4)";
+        } else if(data.status.includes('Mín/Máx Diária')) {
+            badge.style.borderColor = "#06b6d4";
+            badge.style.color = "#06b6d4";
+            badge.style.boxShadow = "0 0 10px rgba(6,182,212,0.4)";
         } else if(data.status.includes('Scalping (10x)')) {
             badge.style.borderColor = "#10b981";
             badge.style.color = "#10b981";
@@ -123,12 +127,12 @@ function updateUI(data) {
 async function startBot(strategyType = 'spot') {
     const selectedCoin = document.getElementById('coin-selector').value;
     
-    if (selectedCoin === "MULTI" && strategyType !== "scalping_10x" && strategyType !== "reverse_martingale" && strategyType !== "sniper" && strategyType !== "survival" && strategyType !== "chameleon" && strategyType !== "fibonacci") {
-        alert("O modo Scanner MULTI está disponível apenas nas estratégias: Survival Scalper, Scalping 10x, Reverse Martingale, Alavancagem Sniper, Camaleão e Retração Fibonacci.");
+    if (selectedCoin === "MULTI" && strategyType !== "scalping_10x" && strategyType !== "reverse_martingale" && strategyType !== "sniper" && strategyType !== "survival" && strategyType !== "chameleon" && strategyType !== "fibonacci" && strategyType !== "daily_range") {
+        alert("O modo Scanner MULTI está disponível apenas nas estratégias: Survival Scalper, Scalping 10x, Reverse Martingale, Alavancagem Sniper, Camaleão, Retração Fibonacci e Mínima/Máxima Diária.");
         return;
     }
     
-    const isDerivatives = strategyType === 'sniper' || strategyType === 'martingale' || strategyType === 'trend' || strategyType === 'reverse_martingale' || strategyType === 'scalping_10x' || strategyType === 'survival' || strategyType === 'longshort_lev' || strategyType === 'double7' || strategyType === 'chameleon' || strategyType === 'fibonacci';
+    const isDerivatives = strategyType === 'sniper' || strategyType === 'martingale' || strategyType === 'trend' || strategyType === 'reverse_martingale' || strategyType === 'scalping_10x' || strategyType === 'survival' || strategyType === 'longshort_lev' || strategyType === 'double7' || strategyType === 'chameleon' || strategyType === 'fibonacci' || strategyType === 'daily_range';
     
     let symbol = "";
     if (selectedCoin === "MULTI") {
