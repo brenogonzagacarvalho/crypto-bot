@@ -1,9 +1,18 @@
 import ccxt
+import sys
+import os
+sys.stdout.reconfigure(encoding='utf-8')
 
 def listar_mercados_bybit():
     print("🔍 Consultando mercados SPOT disponíveis na Bybit...\n")
     
     exchange = ccxt.bybit({
+        'urls': {
+            'api': {
+                'public': 'https://api.bytick.com',
+                'private': 'https://api.bytick.com',
+            },
+        },
         'options': {
             'defaultType': 'spot',
         }

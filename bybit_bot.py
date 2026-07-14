@@ -23,6 +23,12 @@ def connect_to_bybit():
         'apiKey': api_key,
         'secret': api_secret,
         'enableRateLimit': True, # Recomendado para não exceder limites da API
+        'urls': {
+            'api': {
+                'public': 'https://api.bytick.com',
+                'private': 'https://api.bytick.com',
+            },
+        },
         'options': {
             'adjustForTimeDifference': True, # Sincroniza o horário com a Bybit automaticamente
         }

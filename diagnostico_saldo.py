@@ -16,6 +16,12 @@ exchange = ccxt.bybit({
     'apiKey': os.getenv('BYBIT_API_KEY'),
     'secret': os.getenv('BYBIT_API_SECRET'),
     'enableRateLimit': True,
+    'urls': {
+        'api': {
+            'public': 'https://api.bytick.com',
+            'private': 'https://api.bytick.com',
+        },
+    },
     'options': {
         'adjustForTimeDifference': True,
     }

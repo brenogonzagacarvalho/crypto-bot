@@ -23,6 +23,12 @@ def get_exchange():
         'apiKey': api_key,
         'secret': api_secret,
         'enableRateLimit': True, 
+        'urls': {
+            'api': {
+                'public': 'https://api.bytick.com',
+                'private': 'https://api.bytick.com',
+            },
+        },
         'options': {
             'adjustForTimeDifference': True, # Previne erro 10002 de timestamp
             'recvWindow': 60000,             # Aumenta a tolerância de dessincronização de horário para 60s
