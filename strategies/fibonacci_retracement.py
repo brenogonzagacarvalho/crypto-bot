@@ -271,8 +271,8 @@ def run_fibonacci_strategy(exchange, symbol='MULTI', leverage=25, check_interval
                             lower_wick > body * 1.5):
                             
                             add_log(f"📐 SINAL FIBONACCI LONG CONFIRMADO em {coin_name}! Entrada em {current_price:,.4f}")
-                            RISK_PER_TRADE_PCT = 0.01
-                            trade_size_usd = max(2.0, collateral_usd * RISK_PER_TRADE_PCT * leverage)
+                            # Garante um tamanho de posição mínimo de $30.0 para que os lucros compensem as taxas da Bybit
+                            trade_size_usd = max(30.0, collateral_usd * RISK_PER_TRADE_PCT * leverage)
                             amount = trade_size_usd / current_price
                             
                             tp_price_prec = float(exchange.price_to_precision(sym, tp_price))
@@ -323,8 +323,8 @@ def run_fibonacci_strategy(exchange, symbol='MULTI', leverage=25, check_interval
                             upper_wick > body * 1.5):
                             
                             add_log(f"📐 SINAL FIBONACCI SHORT CONFIRMADO em {coin_name}! Entrada em {current_price:,.4f}")
-                            RISK_PER_TRADE_PCT = 0.01
-                            trade_size_usd = max(2.0, collateral_usd * RISK_PER_TRADE_PCT * leverage)
+                            # Garante um tamanho de posição mínimo de $30.0 para que os lucros compensem as taxas da Bybit
+                            trade_size_usd = max(30.0, collateral_usd * RISK_PER_TRADE_PCT * leverage)
                             amount = trade_size_usd / current_price
                             
                             tp_price_prec = float(exchange.price_to_precision(sym, tp_price))

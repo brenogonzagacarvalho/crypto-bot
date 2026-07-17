@@ -109,11 +109,24 @@ def execute_trend_following(exchange, symbol, current_price, regime, signals, us
     if atr is None or vwap is None:
         return False
 
-    # Stop Loss dinâmico por ATR (min 0.4%, max 1.5%)
+    # Stop Loss dinâmico por ATR (min 0.5%, max 1.5%)
     dist = 2 * atr
-    dist = max(current_price * 0.004, min(current_price * 0.015, dist))
+    dist = max(current_price * 0.005, min(current_price * 0.015, dist))
 
-    trade_size_usd = max(2.0, usdt_balance * RISK_PER_TRADE_PCT * leverage)
+    # Garante um tamanho de posição mínimo de $30.0 para que os lucros compensem as taxas da Bybit
+    trade_size_usd = max(30.0, usdt_balance * RISK_PER_TRADE_PCT * leverage)
+    
+    # Filtro de lote mínimo vs risco planejado
+    try:
+        market = exchange.market(symbol)
+        min_amount = market['limits']['amount']['min']
+        min_val_usd = min_amount * current_price
+        if min_val_usd > trade_size_usd * 1.3:
+            add_log(f"⚠️ {symbol.split('/')[0]} ignorada (Trend): lote mínimo (${min_val_usd:.2f}) excede risco (${trade_size_usd:.2f}).")
+            return False
+    except Exception as e:
+        pass
+
     amount   = trade_size_usd / current_price
 
     if regime == 'UPTREND':
@@ -158,11 +171,24 @@ def execute_mean_reversion(exchange, symbol, current_price, regime, signals, usd
     if atr is None or lower_wick is None or upper_wick is None or body is None:
         return False
 
-    # Stop Loss dinâmico por ATR (min 0.25%, max 0.75%)
+    # Stop Loss dinâmico por ATR (min 0.4%, max 1.0%)
     dist = 2 * atr
-    dist = max(current_price * 0.0025, min(current_price * 0.0075, dist))
+    dist = max(current_price * 0.004, min(current_price * 0.01, dist))
 
-    trade_size_usd = max(2.0, usdt_balance * RISK_PER_TRADE_PCT * leverage)
+    # Garante um tamanho de posição mínimo de $30.0 para que os lucros compensem as taxas da Bybit
+    trade_size_usd = max(30.0, usdt_balance * RISK_PER_TRADE_PCT * leverage)
+    
+    # Filtro de lote mínimo vs risco planejado
+    try:
+        market = exchange.market(symbol)
+        min_amount = market['limits']['amount']['min']
+        min_val_usd = min_amount * current_price
+        if min_val_usd > trade_size_usd * 1.3:
+            add_log(f"⚠️ {symbol.split('/')[0]} ignorada (Range): lote mínimo (${min_val_usd:.2f}) excede risco (${trade_size_usd:.2f}).")
+            return False
+    except Exception as e:
+        pass
+
     amount = trade_size_usd / current_price
 
     rsi = signals.get('rsi')
@@ -327,10 +353,9 @@ def run_chameleon_strategy(exchange, symbol='BTC/USDT:USDT', leverage=30, check_
                     side_pos = active_positions[sym]['side']
 
                     if ((regime_pos == 'DOWNTREND' and (side_pos == 'LONG' or side_pos == 'BUY')) or
-                        (regime_pos == 'UPTREND' and (side_pos == 'SHORT' or side_pos == 'SELL')) or
-                        regime_pos == 'VOLATILE'):
+                        (regime_pos == 'UPTREND' and (side_pos == 'SHORT' or side_pos == 'SELL'))):
                         
-                        add_log(f"⚠️ Regime em {sym} mudou para {regime_pos}! Fechando posição {side_pos} por segurança.")
+                        add_log(f"⚠️ Regime em {sym} reverteu para {regime_pos}! Fechando posição {side_pos} por segurança.")
                         
                         positions = exchange.fetch_positions([sym])
                         contracts = 0

@@ -638,75 +638,61 @@ def auto_invest_earn():
 
 @app.route('/api/history')
 def get_history():
-    import csv
-    import glob
-    log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
-    all_trades = []
-    
-    # Busca todos os arquivos CSV em logs
-    csv_files = glob.glob(os.path.join(log_dir, '*.csv'))
-    for file_path in csv_files:
-        if 'market_data' in file_path or 'trend_history' in file_path:
-            continue # Ignora arquivos de log de mercado
-            
-        strategy_name = os.path.basename(file_path).replace('.csv', '').replace('_trades', '').capitalize()
-            
+    global exchange
+    if not exchange:
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    # Normalização de nomes de colunas
-                    tipo = (row.get('Tipo') or row.get('Action') or '').upper()
-                    if tipo == 'SCAN':
-                        continue
-                        
-                    data_hora = row.get('Data/Hora') or row.get('Timestamp') or ''
-                    if not data_hora: continue
-                    
-                    moeda = row.get('Moeda') or row.get('Symbol') or '-'
-                    direcao = row.get('Direção') or row.get('Side') or '-'
-                    preco = row.get('Preço Executado') or row.get('Preço') or row.get('Entry_Price') or '-'
-                    valor = row.get('Valor ($)') or row.get('Quantidade') or row.get('Tamanho $') or row.get('Size') or '-'
-                    status = row.get('Status') or '-'
-                    detalhes = row.get('Detalhes') or row.get('Reason') or '-'
-                    alavancagem = row.get('Alavancagem', '-')
-                    
-                    pnl = row.get('PnL $') or row.get('PnL_USDT')
-                    lucro = '-'
-                    if pnl and pnl not in ['0', '0.0', '0.00']:
-                        try:
-                            lucro = f"${float(pnl):+.4f}"
-                        except:
-                            lucro = pnl
-                    elif tipo in ['SAÍDA', 'SAIDA', 'CLOSE'] or 'WIN' in status or 'LOSS' in status or 'LUCRO' in status or 'META' in status:
-                        if detalhes.startswith('+$') or detalhes.startswith('-$'):
-                            lucro = detalhes
-                        elif detalhes.startswith('$+') or detalhes.startswith('$-'):
-                            lucro = detalhes.replace('$+', '+$').replace('$-', '-$')
-                        elif 'Lucro:' in detalhes:
-                            lucro = detalhes.split('Lucro:')[1].strip()
-                            
-                    trade = {
-                        'data': data_hora,
-                        'estrategia': strategy_name,
-                        'moeda': moeda,
-                        'tipo': tipo,
-                        'direcao': direcao,
-                        'preco': preco,
-                        'valor': valor,
-                        'alavancagem': alavancagem,
-                        'status': status,
-                        'detalhes': detalhes,
-                        'lucro': lucro
-                    }
-                    all_trades.append(trade)
+            exchange = get_exchange()
         except Exception as e:
-            print(f"Erro lendo {file_path}: {e}")
+            return jsonify({"error": f"Erro de conexão: {e}", "history": []})
             
-    # Ordena da mais recente para a mais antiga
-    all_trades.sort(key=lambda x: x['data'], reverse=True)
-    
-    return jsonify({"history": all_trades, "status": "ok"})
+    try:
+        # Pega as últimas 50 posições fechadas da Bybit
+        resp = exchange.privateGetV5PositionClosedPnl({
+            'category': 'linear',
+            'limit': 50
+        })
+        closed_list = resp.get('result', {}).get('list', [])
+        
+        all_trades = []
+        for item in closed_list:
+            timestamp_ms = int(item.get('createdTime') or 0)
+            data_hora = datetime.fromtimestamp(timestamp_ms / 1000.0).strftime('%Y-%m-%d %H:%M:%S') if timestamp_ms else '-'
+            
+            moeda = item.get('symbol', '-')
+            qty = item.get('qty', '-')
+            
+            # Se a ordem de fechamento foi 'Sell', a posição original era 'LONG'
+            side = item.get('side', '').upper()
+            if side == 'SELL':
+                direcao = 'Close Long'
+            elif side == 'BUY':
+                direcao = 'Close Short'
+            else:
+                direcao = side
+                
+            entry_price = item.get('avgEntryPrice', '-')
+            exit_price = item.get('avgExitPrice', '-')
+            
+            pnl_val = item.get('closedPnl')
+            pnl = float(pnl_val) if pnl_val else 0.0
+            status = 'WIN' if pnl > 0 else 'LOSS'
+            lucro = f"${pnl:+.4f}"
+            
+            all_trades.append({
+                'data': data_hora,
+                'moeda': moeda,
+                'quantidade': qty,
+                'direcao': direcao,
+                'entry_price': entry_price,
+                'exit_price': exit_price,
+                'status': status,
+                'lucro': lucro
+            })
+            
+        return jsonify({"history": all_trades, "status": "ok"})
+    except Exception as e:
+        print(f"Erro ao buscar histórico da Bybit: {e}")
+        return jsonify({"error": str(e), "history": []}), 500
 
 @app.route('/api/start', methods=['POST'])
 def start_bot():

@@ -305,8 +305,6 @@ async function fetchHistory() {
                 data.history.forEach(trade => {
                     const tr = document.createElement('tr');
                     
-                    const direcaoClass = trade.direcao.includes('LONG') ? 'side-long' : (trade.direcao.includes('SHORT') ? 'side-short' : '');
-                    
                     let lucroHTML = '-';
                     if (trade.lucro && trade.lucro !== '-') {
                         const isPositive = trade.lucro.includes('+') || !trade.lucro.includes('-');
@@ -314,29 +312,25 @@ async function fetchHistory() {
                         lucroHTML = `<span class="${colorClass}">${trade.lucro}</span>`;
                     }
                     
-                    let tipoHTML = '-';
-                    if (trade.tipo === 'ENTRADA') {
-                        tipoHTML = `<span class="badge" style="background: rgba(59, 130, 246, 0.2); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.4); padding: 0.1rem 0.4rem; border-radius: 4px; font-size: 0.75rem;">Abertura 📥</span>`;
-                    } else if (trade.tipo === 'SAÍDA' || trade.tipo === 'SAIDA') {
-                        tipoHTML = `<span class="badge" style="background: rgba(16, 185, 129, 0.2); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.4); padding: 0.1rem 0.4rem; border-radius: 4px; font-size: 0.75rem;">Fechamento 📤</span>`;
-                    } else {
-                        tipoHTML = trade.tipo || '-';
-                    }
+                    const isLong = trade.direcao.includes('Long');
+                    const direcaoHTML = `<span class="badge" style="background: ${isLong ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)'}; color: ${isLong ? '#10b981' : '#ef4444'}; border: 1px solid ${isLong ? 'rgba(16, 185, 129, 0.4)' : 'rgba(239, 68, 68, 0.4)'}; padding: 0.1rem 0.4rem; border-radius: 4px; font-size: 0.75rem;">${trade.direcao}</span>`;
                     
-                    let precoHTML = '-';
-                    if (trade.preco && trade.preco !== '-' && !isNaN(parseFloat(trade.preco))) {
-                        const parsedPrice = parseFloat(trade.preco);
-                        precoHTML = `$${parsedPrice.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 4})}`;
-                    }
+                    const formatPrice = (p) => {
+                        if (!p || p === '-' || isNaN(parseFloat(p))) return '-';
+                        return `$${parseFloat(p).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 4})}`;
+                    };
+
+                    const isWin = trade.status === 'WIN';
+                    const statusHTML = `<span class="badge" style="background: ${isWin ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)'}; color: ${isWin ? '#10b981' : '#ef4444'}; border: 1px solid ${isWin ? 'rgba(16, 185, 129, 0.4)' : 'rgba(239, 68, 68, 0.4)'}; padding: 0.1rem 0.4rem; border-radius: 4px; font-size: 0.75rem;">${isWin ? 'Win' : 'Loss'}</span>`;
 
                     tr.innerHTML = `
                         <td>${trade.data}</td>
-                        <td>${trade.estrategia}</td>
-                        <td>${tipoHTML}</td>
                         <td><strong>${trade.moeda}</strong></td>
-                        <td class="${direcaoClass}">${trade.direcao}</td>
-                        <td>${precoHTML}</td>
-                        <td>${trade.status}</td>
+                        <td>${trade.quantidade}</td>
+                        <td>${direcaoHTML}</td>
+                        <td>${formatPrice(trade.entry_price)}</td>
+                        <td>${formatPrice(trade.exit_price)}</td>
+                        <td>${statusHTML}</td>
                         <td>${lucroHTML}</td>
                     `;
                     body.appendChild(tr);

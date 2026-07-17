@@ -238,6 +238,32 @@ def run_survival_scalper(exchange, symbol='MULTI'):
                     
                     if rsi is None or ema200 is None or hist is None or vwap is None or atr is None: continue
                     
+                    # 1. Macro Filtro de Tendência HTF (1 Hora EMA 50)
+                    htf_trend = "NEUTRAL"
+                    try:
+                        ohlcv_1h = fetch_ohlcv_data(exchange, sym, timeframe='1h', limit=210)
+                        if ohlcv_1h:
+                            closes_1h = ohlcv_1h['c']
+                            ema50_1h = calculate_ema(closes_1h, period=50)
+                            if ema50_1h is not None:
+                                htf_trend = "UPTREND" if current_price > ema50_1h else "DOWNTREND"
+                    except Exception as e:
+                        pass
+
+                    # 2. Filtro de Risco e Lote Mínimo para evitar sobre-exposição de banca
+                    try:
+                        market = exchange.market(sym)
+                        min_amount = market['limits']['amount']['min']
+                        min_val_usd = min_amount * current_price
+                        target_val_usd = trade_amount * leverage
+                        
+                        if min_val_usd > target_val_usd * 1.3:
+                            if scan_count % 10 == 1:
+                                add_log(f"⚠️ {coin_name} ignorada: lote mínimo (${min_val_usd:.2f}) excede risco (${target_val_usd:.2f}).")
+                            continue
+                    except Exception as e:
+                        pass
+                    
                     # Ler anatomia do último candle de 5m fechado para exaustão
                     o_prev = ohlcv['o'][-2]
                     h_prev = ohlcv['h'][-2]
@@ -249,7 +275,7 @@ def run_survival_scalper(exchange, symbol='MULTI'):
 
                     bot_state["current_price"] = current_price
                     bot_state["rsi"] = rsi
-                    trend = "ALTA 📈" if current_price > ema200 else "BAIXA 📉"
+                    trend = f"ALTA 📈 (HTF: {htf_trend})" if current_price > ema200 else f"BAIXA 📉 (HTF: {htf_trend})"
                     
                     prev_rsi = rsi_history.get(sym, rsi)
                     rsi_history[sym] = rsi
@@ -258,45 +284,69 @@ def run_survival_scalper(exchange, symbol='MULTI'):
                     wick_ratio = (lower_wick / body) if current_price > ema200 else (upper_wick / body)
                     add_log(f"  {coin_name}: Preço: ${current_price:,.4f} | RSI: {rsi:.1f} (Ant: {prev_rsi:.1f}) | EMA200: ${ema200:,.4f} | VWAP: ${vwap:,.4f} | Pavio: {wick_ratio:.1f}x | Trend: {trend}")
 
-                    # Stop Loss dinâmico por ATR (min 0.3%, max 1.5% do preço de entrada)
+                    # Stop Loss dinâmico por ATR (min 0.5%, max 1.5% do preço de entrada)
                     dist = 2 * atr
-                    dist = max(current_price * 0.003, min(current_price * 0.015, dist))
+                    dist = max(current_price * 0.005, min(current_price * 0.015, dist))
 
-                    # GATILHO LONG: Tendência + Sobrevenda + Reversão + VWAP + Rejeição
-                    if rsi <= 45 and rsi > prev_rsi: 
-                        # Filtros VWAP, Tendência e Pavio de Rejeição de Baixa
-                        if current_price > ema200 and current_price > vwap and lower_wick > body * 1.5:
-                            add_log(f"🛡️ SINAL LONG DE SOBREVIVÊNCIA em {coin_name}!")
-                            amount_to_buy = (trade_amount * leverage) / current_price
-                            sl_raw = current_price - dist
-                            tp_raw = current_price + 3 * dist # Mantém 3:1 dinâmico
-                            tp_price = float(exchange.price_to_precision(sym, tp_raw))
-                            sl_price = float(exchange.price_to_precision(sym, sl_raw))
-                            
-                            try:
-                                order, filled = place_maker_entry(exchange, sym, 'buy', amount_to_buy, current_price, tp_price, sl_price)
-                                if filled:
-                                    active_positions[sym] = {'side': 'LONG', 'entry_price': current_price}
-                                    log_trade(sym, 'ENTRADA', 'LONG', current_price, rsi, trade_amount, leverage, tp_price, sl_price, collateral_usd, '✅ SUCESSO')
-                            except Exception as e: add_log(f"❌ Erro: {e}")
-                                
-                    # GATILHO SHORT: Tendência Baixa + Sobrecompra + Reversão + VWAP + Rejeição
-                    elif rsi >= 55 and rsi < prev_rsi: 
-                        # Filtros VWAP, Tendência e Pavio de Rejeição de Alta
-                        if current_price < ema200 and current_price < vwap and upper_wick > body * 1.5:
-                            add_log(f"🛡️ SINAL SHORT DE SOBREVIVÊNCIA em {coin_name}!")
-                            amount_to_sell = (trade_amount * leverage) / current_price
-                            sl_raw = current_price + dist
-                            tp_raw = current_price - 3 * dist # Mantém 3:1 dinâmico
-                            tp_price = float(exchange.price_to_precision(sym, tp_raw))
-                            sl_price = float(exchange.price_to_precision(sym, sl_raw))
-                            
-                            try:
-                                order, filled = place_maker_entry(exchange, sym, 'sell', amount_to_sell, current_price, tp_price, sl_price)
-                                if filled:
-                                    active_positions[sym] = {'side': 'SHORT', 'entry_price': current_price}
-                                    log_trade(sym, 'ENTRADA', 'SHORT', current_price, rsi, trade_amount, leverage, tp_price, sl_price, collateral_usd, '✅ SUCESSO')
-                            except Exception as e: add_log(f"❌ Erro: {e}")
+                    # Verificação dos gatilhos
+                    trigger_buy = False
+                    trigger_sell = False
+                    signal_type = "TENDÊNCIA"
+
+                    # GATILHO LONG:
+                    if rsi <= 25 and rsi > prev_rsi:
+                        # 1. Contra-tendência (Extrema Sobrevenda + Rejeição moderada)
+                        if lower_wick > body * 1.0:
+                            trigger_buy = True
+                            signal_type = "CONTRA-TENDÊNCIA"
+                    elif rsi <= 45 and rsi > prev_rsi:
+                        # 2. Seguindo a Tendência (Filtros VWAP, Tendência HTF e Médias, SEM restrição de pavio)
+                        if htf_trend == "UPTREND" and current_price > ema200 and current_price > vwap:
+                            trigger_buy = True
+                            signal_type = "TENDÊNCIA"
+
+                    # GATILHO SHORT:
+                    if rsi >= 75 and rsi < prev_rsi:
+                        # 1. Contra-tendência (Extrema Sobrecompra + Rejeição moderada)
+                        if upper_wick > body * 1.0:
+                            trigger_sell = True
+                            signal_type = "CONTRA-TENDÊNCIA"
+                    elif rsi >= 55 and rsi < prev_rsi:
+                        # 2. Seguindo a Tendência (Filtros VWAP, Tendência HTF e Médias, SEM restrição de pavio)
+                        if htf_trend == "DOWNTREND" and current_price < ema200 and current_price < vwap:
+                            trigger_sell = True
+                            signal_type = "TENDÊNCIA"
+
+                    # EXECUÇÃO DE ORDENS
+                    if trigger_buy:
+                        add_log(f"🛡️ SINAL LONG DE SOBREVIVÊNCIA ({signal_type}) em {coin_name}!")
+                        amount_to_buy = (trade_amount * leverage) / current_price
+                        sl_raw = current_price - dist
+                        tp_raw = current_price + 3 * dist # Mantém 3:1 dinâmico
+                        tp_price = float(exchange.price_to_precision(sym, tp_raw))
+                        sl_price = float(exchange.price_to_precision(sym, sl_raw))
+                        
+                        try:
+                            order, filled = place_maker_entry(exchange, sym, 'buy', amount_to_buy, current_price, tp_price, sl_price)
+                            if filled:
+                                active_positions[sym] = {'side': 'LONG', 'entry_price': current_price}
+                                log_trade(sym, 'ENTRADA', 'LONG', current_price, rsi, trade_amount, leverage, tp_price, sl_price, collateral_usd, f'✅ SUCESSO ({signal_type})')
+                        except Exception as e: add_log(f"❌ Erro: {e}")
+
+                    elif trigger_sell:
+                        add_log(f"🛡️ SINAL SHORT DE SOBREVIVÊNCIA ({signal_type}) em {coin_name}!")
+                        amount_to_sell = (trade_amount * leverage) / current_price
+                        sl_raw = current_price + dist
+                        tp_raw = current_price - 3 * dist # Mantém 3:1 dinâmico
+                        tp_price = float(exchange.price_to_precision(sym, tp_raw))
+                        sl_price = float(exchange.price_to_precision(sym, sl_raw))
+                        
+                        try:
+                            order, filled = place_maker_entry(exchange, sym, 'sell', amount_to_sell, current_price, tp_price, sl_price)
+                            if filled:
+                                active_positions[sym] = {'side': 'SHORT', 'entry_price': current_price}
+                                log_trade(sym, 'ENTRADA', 'SHORT', current_price, rsi, trade_amount, leverage, tp_price, sl_price, collateral_usd, f'✅ SUCESSO ({signal_type})')
+                        except Exception as e: add_log(f"❌ Erro: {e}")
                         
                     time.sleep(0.5)
             
