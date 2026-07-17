@@ -87,6 +87,10 @@ def run_reverse_martingale_pro(exchange, symbol='BTC/USDT:USDT'):
         while bot_state["is_running"]:
             scan_count += 1
             available_usd, _ = get_available_margin_usd(exchange)
+            if available_usd is None:
+                add_log("⚠️ Erro ao ler saldo da API. Tentando novamente no próximo ciclo...")
+                time.sleep(5)
+                continue
             bot_state["usdt_balance"] = available_usd
             
             # Trava de Segurança Diária

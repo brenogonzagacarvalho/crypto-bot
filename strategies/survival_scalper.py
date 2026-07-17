@@ -138,6 +138,10 @@ def run_survival_scalper(exchange, symbol='MULTI'):
             
             try:
                 collateral_usd, collateral_coin, _ = get_collateral_usd(exchange)
+                if collateral_usd is None:
+                    add_log("⚠️ Erro ao obter saldo da API (Bybit). Aguardando...")
+                    time.sleep(5)
+                    continue
                 bot_state["usdt_balance"] = collateral_usd
             except Exception as e:
                 add_log(f"⚠️ Erro ao ler banca: {e}")

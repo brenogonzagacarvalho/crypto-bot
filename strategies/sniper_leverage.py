@@ -54,14 +54,18 @@ def set_margin_leverage(exchange, symbol, leverage):
 
 def get_collateral_usd(exchange):
     """Usa a margem real disponível (totalAvailableBalance) da Bybit UTA."""
-    available, total_equity = get_available_margin_usd(exchange)
-    
-    if available > 0.01:
-        # Detecta qual moeda é o colateral principal
-        btc_bal = get_unified_balance(exchange, 'BTC')
-        if btc_bal > 0.0:
-            return available, 'BTC', btc_bal
-        return available, 'USDT', available
+    try:
+        available, total_equity = get_available_margin_usd(exchange)
+        if available is None:
+            return None, 'ERROR', 0.0
+        if available > 0.01:
+            btc_bal = get_unified_balance(exchange, 'BTC')
+            if btc_bal > 0.0:
+                return available, 'BTC', btc_bal
+            return available, 'USDT', available
+    except:
+        pass
+    return 0.0, 'NONE', 0.0
     
     return 0.0, 'NONE', 0.0
 
@@ -119,6 +123,10 @@ def run_sniper_leverage(exchange, symbol='BTC/USDT:USDT', leverage=100, check_in
             
             # Atualiza colateral (BTC ou USDT)
             collateral_usd, collateral_coin, collateral_raw = get_collateral_usd(exchange)
+            if collateral_usd is None:
+                add_log("⚠️ Erro ao obter saldo da API (Bybit). Aguardando...")
+                time.sleep(5)
+                continue
             bot_state["usdt_balance"] = collateral_usd
             if collateral_coin == 'BTC':
                 bot_state["coin_balance"] = collateral_raw

@@ -116,6 +116,10 @@ def run_vwap_deviation_strategy(exchange, symbol='MULTI', leverage=30, check_int
             
             try:
                 collateral_usd, total_equity = get_available_margin_usd(exchange)
+                if collateral_usd is None:
+                    add_log("⚠️ Erro ao atualizar saldo. Aguardando...")
+                    time.sleep(5)
+                    continue
                 bot_state["usdt_balance"] = collateral_usd
             except Exception as e:
                 add_log(f"⚠️ Erro ao atualizar saldo: {e}")

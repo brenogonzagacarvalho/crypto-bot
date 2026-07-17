@@ -43,12 +43,17 @@ def log_trade(symbol, tipo, direcao, preco, rsi, mao, leverage, tp, sl, saldo, w
 # --- COLATERAL ---
 def get_collateral_usd(exchange):
     """Usa a margem real disponível (totalAvailableBalance) da Bybit UTA."""
-    available, total_equity = get_available_margin_usd(exchange)
-    if available > 0.01:
-        btc_bal = get_unified_balance(exchange, 'BTC')
-        if btc_bal > 0.0:
-            return available, 'BTC', btc_bal
-        return available, 'USDT', available
+    try:
+        available, total_equity = get_available_margin_usd(exchange)
+        if available is None:
+            return None, 'ERROR', 0.0
+        if available > 0.01:
+            btc_bal = get_unified_balance(exchange, 'BTC')
+            if btc_bal > 0.0:
+                return available, 'BTC', btc_bal
+            return available, 'USDT', available
+    except:
+        pass
     return 0.0, 'NONE', 0.0
 
 def set_margin_leverage(exchange, symbol, leverage):
@@ -117,6 +122,10 @@ def run_reverse_martingale(exchange, symbol='BTC/USDT:USDT', leverage=100, check
             scan_count += 1
             
             collateral_usd, collateral_coin, collateral_raw = get_collateral_usd(exchange)
+            if collateral_usd is None:
+                add_log("⚠️ Erro ao ler saldo da API (Bybit). Tentando novamente...")
+                time.sleep(5)
+                continue
             bot_state["usdt_balance"] = collateral_usd
             if collateral_coin == 'BTC':
                 bot_state["coin_balance"] = collateral_raw
