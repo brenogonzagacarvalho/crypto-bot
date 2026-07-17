@@ -43,7 +43,7 @@ def run_fibonacci_strategy(exchange, symbol='MULTI', leverage=25, check_interval
     init_trade_log()
 
     is_multi = (symbol == "MULTI")
-    symbols_to_scan = ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT", "XRP/USDT:USDT", "ADA/USDT:USDT", "DOGE/USDT:USDT"] if is_multi else [symbol]
+    symbols_to_scan = ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT", "XRP/USDT:USDT", "ADA/USDT:USDT", "DOGE/USDT:USDT", "BNB/USDT:USDT"] if is_multi else [symbol]
 
     add_log(f"{'='*55}")
     add_log(f"📐 ESTRATÉGIA RETRAÇÃO FIBONACCI 61.8% — {'MULTI-SCAN' if is_multi else symbol}")

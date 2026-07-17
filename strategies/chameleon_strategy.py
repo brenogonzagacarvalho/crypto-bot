@@ -114,7 +114,7 @@ def execute_trend_following(exchange, symbol, current_price, regime, signals, us
     dist = max(current_price * 0.005, min(current_price * 0.015, dist))
 
     # Garante um tamanho de posição mínimo de $30.0 para que os lucros compensem as taxas da Bybit
-    trade_size_usd = max(30.0, usdt_balance * RISK_PER_TRADE_PCT * leverage)
+    trade_size_usd = max(90.0, usdt_balance * RISK_PER_TRADE_PCT * leverage)
     
     # Filtro de lote mínimo vs risco planejado
     try:
@@ -223,7 +223,7 @@ def run_chameleon_strategy(exchange, symbol='BTC/USDT:USDT', leverage=30, check_
     init_trade_log()
 
     is_multi = (symbol == "MULTI")
-    symbols_to_scan = ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT", "XRP/USDT:USDT", "ADA/USDT:USDT", "DOGE/USDT:USDT"] if is_multi else [symbol]
+    symbols_to_scan = ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT", "XRP/USDT:USDT", "ADA/USDT:USDT", "DOGE/USDT:USDT", "BNB/USDT:USDT"] if is_multi else [symbol]
 
     add_log(f"{'='*55}")
     add_log(f"🦎 ESTRATÉGIA CAMALEÃO — {'MULTI-SCAN' if is_multi else symbol}")

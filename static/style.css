@@ -192,19 +192,40 @@ h1 {
 }
 
 .coin-dropdown {
-    background: rgba(0,0,0,0.5);
+    background: rgba(15, 23, 42, 0.85);
     color: var(--crypto-green);
-    border: 1px solid var(--crypto-green);
-    padding: 0.4rem;
+    border: 1px solid rgba(16, 185, 129, 0.4);
+    padding: 0.5rem 2rem 0.5rem 1rem;
     border-radius: 8px;
     font-weight: 600;
     font-family: 'Inter', sans-serif;
     outline: none;
     cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2310b981' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+    background-repeat: no-repeat;
+    background-position: right 0.7rem center;
+    background-size: 1rem;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
 }
+
+.coin-dropdown:hover {
+    border-color: var(--crypto-green);
+    box-shadow: 0 0 10px var(--crypto-green-glow);
+}
+
+.coin-dropdown:focus {
+    border-color: var(--crypto-green);
+    box-shadow: 0 0 15px var(--crypto-green-glow);
+}
+
 .coin-dropdown option {
-    background: var(--bg-dark);
-    color: var(--text-primary);
+    background: #0f172a;
+    color: #f8fafc;
+    padding: 0.5rem;
 }
 
 /* --- Navegação por Abas --- */

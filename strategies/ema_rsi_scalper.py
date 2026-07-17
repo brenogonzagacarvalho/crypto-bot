@@ -45,8 +45,7 @@ def run_ema_rsi_strategy(exchange, symbol='MULTI', leverage=30, check_interval=5
     init_trade_log()
 
     is_multi = (symbol == "MULTI")
-    # XRP e Altcoins inclusas, BTC removido por padrão de lote mínimo
-    symbols_to_scan = ["ETH/USDT:USDT", "SOL/USDT:USDT", "XRP/USDT:USDT", "ADA/USDT:USDT", "DOGE/USDT:USDT"] if is_multi else [symbol]
+    symbols_to_scan = ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT", "XRP/USDT:USDT", "ADA/USDT:USDT", "DOGE/USDT:USDT", "BNB/USDT:USDT"] if is_multi else [symbol]
 
     add_log(f"{'='*55}")
     add_log(f"⚡ ESTRATÉGIA EMA CROSS + RSI SCALPER — {'MULTI-SCAN' if is_multi else symbol}")

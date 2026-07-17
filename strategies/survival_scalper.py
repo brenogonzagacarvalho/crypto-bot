@@ -145,7 +145,7 @@ def run_survival_scalper(exchange, symbol='MULTI'):
                 continue
                 
             risk_pct = config.get('risk_per_trade', 0.20)
-            trade_amount = max(2.0, collateral_usd * risk_pct)
+            trade_amount = max(1.0, collateral_usd * risk_pct)
             
             if len(active_positions) < MAX_POSITIONS and trade_amount < 0.10:
                 add_log(f"⚠️ Mão muito pequena (${trade_amount:.2f}). Aguardando...")

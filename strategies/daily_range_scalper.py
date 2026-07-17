@@ -46,7 +46,7 @@ def run_daily_range_strategy(exchange, symbol='MULTI', leverage=20, check_interv
     init_trade_log()
 
     is_multi = (symbol == "MULTI")
-    symbols_to_scan = ["ETH/USDT:USDT", "SOL/USDT:USDT", "XRP/USDT:USDT", "ADA/USDT:USDT", "DOGE/USDT:USDT"] if is_multi else [symbol]
+    symbols_to_scan = ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT", "XRP/USDT:USDT", "ADA/USDT:USDT", "DOGE/USDT:USDT", "BNB/USDT:USDT"] if is_multi else [symbol]
 
     add_log(f"{'='*55}")
     add_log(f"📐 ESTRATÉGIA MÍNIMA/MÁXIMA DIÁRIA (YHL) — {'MULTI-SCAN' if is_multi else symbol}")
