@@ -137,6 +137,15 @@
                                 <button class="btn btn-primary" onclick="submitTransfer()" style="width: 100%; background-color: #14b8a6; border-color: #14b8a6; box-shadow: 0 0 10px rgba(20,184,166,0.3); margin-top: 0.5rem;">Confirmar Transferência</button>
                             </div>
                         </div>
+
+                        <!-- Card de Consolidação PIX -->
+                        <div class="glass-card pix-consolidation-card" style="width: 100%; margin-bottom: 0;">
+                            <h2>Preparar Saldo para PIX</h2>
+                            <p class="subtitle">Desliga o robô, fecha posições e converte todo o saldo (incluindo Poupança) em BRL na carteira de Financiamento.</p>
+                            <button id="btn-pix-consolidate" class="btn btn-pix" onclick="consolidateToPix()" style="width: 100%;">
+                                🇧🇷 CONSOLIDAR SALDO EM BRL
+                            </button>
+                        </div>
                     </div>
 
                     <!-- Card de Controle -->
@@ -157,6 +166,9 @@
                         </div>
                         <div class="buttons" style="margin-bottom: 1rem;">
                             <button id="btn-emarsi" class="btn btn-danger" onclick="startBot('ema_rsi')" style="background-color: #c084fc; box-shadow: 0 0 15px rgba(192,132,252,0.7); width: 100%;">⚡ EMA CROSS + RSI SCALPER</button>
+                        </div>
+                        <div class="buttons" style="margin-bottom: 1rem;">
+                            <button id="btn-candlestickrsi" class="btn btn-danger" onclick="startBot('candlestick_rsi')" style="background-color: #e11d48; box-shadow: 0 0 15px rgba(225,29,72,0.7); width: 100%;">🕯️ CANDLESTICK + RSI SCALPER</button>
                         </div>
                         <div class="buttons" style="margin-bottom: 1.5rem;">
                             <button id="btn-vwapdeviation" class="btn btn-danger" onclick="startBot('vwap_deviation')" style="background-color: #38bdf8; box-shadow: 0 0 15px rgba(56,189,248,0.7); width: 100%;">🌊 VWAP DEVIATION SCALPER</button>

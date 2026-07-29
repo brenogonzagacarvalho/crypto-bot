@@ -638,3 +638,45 @@ async function startAutoEarn() {
         alert("Erro de rede ao auto-investir.");
     }
 }
+
+async function consolidateToPix() {
+    if (!confirm("⚠️ ATENÇÃO: Esta ação fará o seguinte:\n" +
+                 "1. Desligará o robô de trade.\n" +
+                 "2. Cancelará todas as ordens pendentes.\n" +
+                 "3. Fechará todas as posições de futuros.\n" +
+                 "4. Resgatará todos os investimentos da Poupança (Earn).\n" +
+                 "5. Venderá todas as criptomoedas da carteira para USDT e depois tudo para BRL.\n" +
+                 "6. Moverá o BRL final para a carteira de Financiamento para saque via PIX.\n\n" +
+                 "Deseja continuar?")) {
+        return;
+    }
+
+    const btn = document.getElementById('btn-pix-consolidate');
+    const originalText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = "⏳ CONSOLIDANDO SALDO...";
+
+    try {
+        const response = await fetch('/api/pix/consolidate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await response.json();
+        
+        if (data.error) {
+            alert("❌ Falha na Consolidação PIX:\n" + data.error);
+        } else {
+            alert("🎉 Consolidação Concluída com Sucesso!\nConsulte os logs no terminal para ver os detalhes da venda e da transferência.");
+        }
+    } catch (error) {
+        console.error("Erro na consolidação PIX:", error);
+        alert("❌ Erro de rede ao executar consolidação.");
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+        fetchStatus();
+        if (typeof fetchEarnData === 'function') {
+            fetchEarnData();
+        }
+    }
+}

@@ -38,6 +38,38 @@ app = Flask(__name__)
 # Instância global da exchange
 exchange = None
 
+def bybit_transfer_direct(coin, amount, from_acc, to_acc):
+    """
+    Transferência interna direta via API V5 para evitar erros locais do CCXT (especialmente com BRL).
+    """
+    global exchange
+    if not exchange:
+        exchange = get_exchange()
+    
+    ac_map = {
+        'unified': 'UNIFIED',
+        'funding': 'FUND',
+        'fund': 'FUND'
+    }
+    from_type = ac_map.get(from_acc.lower(), from_acc.upper())
+    to_type = ac_map.get(to_acc.lower(), to_acc.upper())
+    
+    # BRL possui limite estrito de 4 casas decimais para transferências
+    precision = 4 if coin.upper() == 'BRL' else 8
+    amount_str = f"{amount:.{precision}f}".rstrip('0').rstrip('.')
+    if not amount_str or amount_str == '0':
+        amount_str = str(amount)
+        
+    transfer_id = str(uuid.uuid4())
+    
+    return exchange.privatePostV5AssetTransferInterTransfer({
+        'transferId': transfer_id,
+        'coin': coin.upper(),
+        'amount': amount_str,
+        'fromAccountType': from_type,
+        'toAccountType': to_type
+    })
+
 def init_exchange():
     """Inicializa a exchange e lê o saldo inicial."""
     global exchange
@@ -214,11 +246,19 @@ def get_positions():
 
 @app.route('/api/close_all', methods=['POST'])
 def close_all():
-    """Fecha todas as posições abertas imediatamente."""
+    """Fecha todas as posições abertas e cancela ordens pendentes imediatamente."""
     global exchange
     if not exchange:
         exchange = get_exchange()
     try:
+        # 1. Cancela todas as ordens abertas
+        try:
+            exchange.cancel_all_orders(symbol=None, params={'category': 'linear', 'settleCoin': 'USDT'})
+            add_log("MANUAL: Todas as ordens limite pendentes foram canceladas.")
+        except Exception as ce:
+            add_log(f"Aviso ao cancelar ordens: {ce}")
+            
+        # 2. Fecha todas as posições
         positions = exchange.fetch_positions(params={'category': 'linear', 'settleCoin': 'USDT'})
         closed = 0
         for p in positions:
@@ -234,7 +274,7 @@ def close_all():
                 )
                 add_log(f"MANUAL: Posição {p['symbol']} fechada via Dashboard.")
                 closed += 1
-        return jsonify({"message": f"{closed} posições fechadas com sucesso.", "status": "ok"})
+        return jsonify({"message": f"Ordens canceladas e {closed} posições fechadas com sucesso.", "status": "ok"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -354,8 +394,8 @@ def execute_earn_transfer():
             
         add_log(f"Iniciando transferência de {amount} {coin} ({dir_text})...")
         
-        transfer_res = exchange.transfer(coin, amount, from_acc, to_acc)
-        transfer_id = transfer_res.get('id') or 'N/A'
+        transfer_res = bybit_transfer_direct(coin, amount, from_acc, to_acc)
+        transfer_id = transfer_res.get('result', {}).get('transferId') or transfer_res.get('transferId') or transfer_res.get('id') or 'N/A'
         add_log(f"Sucesso! Transferidos {amount} {coin} ({dir_text}). ID: {transfer_id}")
         
         return jsonify({"message": f"Transferência de {amount} {coin} concluída!", "status": "ok", "result": transfer_res})
@@ -411,7 +451,7 @@ def invest_earn():
         add_log(f"Iniciando alocação em Earn: {amount} {coin} no {product_name}...")
         
         try:
-            transfer_res = exchange.transfer(coin, amount, 'unified', 'funding')
+            transfer_res = bybit_transfer_direct(coin, amount, 'unified', 'funding')
             add_log(f"Transferido {amount} {coin} para carteira de Financiamento (Earn).")
         except Exception as te:
             add_log(f"[ERRO] Falha ao transferir fundos para Earn: {te}")
@@ -479,7 +519,7 @@ def redeem_earn():
         add_log(f"Iniciando resgate de {amount} {coin} de {product_name}...")
         
         try:
-            transfer_res = exchange.transfer(coin, amount, 'funding', 'unified')
+            transfer_res = bybit_transfer_direct(coin, amount, 'funding', 'unified')
             add_log(f"Transferido {amount} {coin} de volta para a carteira de Trade (UTA).")
         except Exception as te:
             add_log(f"[ERRO] Falha ao transferir fundos de volta: {te}")
@@ -527,7 +567,7 @@ def auto_invest_earn():
         if funding_brl >= 5.0:
             add_log(f"[AUTO-INVEST] Identificado {funding_brl:.2f} BRL em Financiamento. Transferindo para Trade (UTA) para converter...")
             try:
-                exchange.transfer('BRL', funding_brl, 'funding', 'unified')
+                bybit_transfer_direct('BRL', funding_brl, 'funding', 'unified')
                 time.sleep(1.5)
             except Exception as e:
                 add_log(f"[AUTO-INVEST AVISO] Não foi possível transferir BRL para UTA: {e}")
@@ -598,7 +638,7 @@ def auto_invest_earn():
                 if balance >= opp["min_invest"]:
                     add_log(f"[AUTO-INVEST] Identificado saldo de {balance:.8f} {coin} na UTA. Alocando automático...")
                     try:
-                        transfer_res = exchange.transfer(coin, balance, 'unified', 'funding')
+                        transfer_res = bybit_transfer_direct(coin, balance, 'unified', 'funding')
                         add_log(f"[AUTO-INVEST] Sucesso! Transferidos {balance:.8f} {coin} para carteira de Financiamento.")
                         
                         new_inv = {
@@ -635,6 +675,215 @@ def auto_invest_earn():
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.route('/api/pix/consolidate', methods=['POST'])
+def consolidate_to_pix():
+    global exchange
+    if not exchange:
+        exchange = get_exchange()
+    try:
+        import time
+        import json
+        
+        add_log("🚀 [CONSOLIDAÇÃO PIX] Iniciando processo para liberar todo o saldo para PIX em BRL...")
+        
+        # 1. Parar o Robô e atualizar estado
+        if bot_state.get("is_running"):
+            bot_state["is_running"] = False
+            add_log("PIX: Robô de trade desligado.")
+            
+        # 2. Cancelar ordens pendentes
+        try:
+            exchange.cancel_all_orders(symbol=None, params={'category': 'linear', 'settleCoin': 'USDT'})
+            exchange.cancel_all_orders(symbol=None, params={'category': 'spot'})
+            add_log("PIX: Todas as ordens pendentes (Futuros e Spot) foram canceladas.")
+        except Exception as ce:
+            add_log(f"PIX AVISO: Algumas ordens podem não ter sido canceladas: {ce}")
+            
+        # 3. Fechar posições abertas
+        try:
+            positions = exchange.fetch_positions(params={'category': 'linear', 'settleCoin': 'USDT'})
+            closed_positions_count = 0
+            for p in positions:
+                contracts = float(p.get('contracts', 0) or 0)
+                if contracts > 0:
+                    close_side = 'sell' if p['side'].lower() == 'long' else 'buy'
+                    exchange.create_order(
+                        symbol=p['symbol'],
+                        type='market',
+                        side=close_side,
+                        amount=contracts,
+                        params={'reduceOnly': True}
+                    )
+                    add_log(f"PIX: Posição de {p['symbol']} fechada a mercado.")
+                    closed_positions_count += 1
+            if closed_positions_count > 0:
+                add_log(f"PIX: Fechadas {closed_positions_count} posições abertas.")
+            else:
+                add_log("PIX: Nenhuma posição aberta para fechar.")
+        except Exception as pe:
+            add_log(f"PIX ERRO: Falha ao verificar/fechar posições: {pe}")
+            
+        # 4. Resgatar Poupança Flexível (Earn)
+        earn_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config', 'earn_investments.json')
+        if os.path.exists(earn_file_path):
+            try:
+                with open(earn_file_path, 'r', encoding='utf-8') as f:
+                    investments = json.load(f)
+                
+                if investments:
+                    add_log(f"PIX: Identificados {len(investments)} investimentos ativos em Poupança. Iniciando resgates...")
+                    for inv in investments:
+                        coin = inv['coin']
+                        amount = inv['amount']
+                        try:
+                            bybit_transfer_direct(coin, amount, 'funding', 'unified')
+                            add_log(f"PIX: Resgatado {amount} {coin} do Bybit Earn para UTA.")
+                        except Exception as te:
+                            add_log(f"PIX AVISO: Não foi possível resgatar {coin} do Earn (pode já estar na carteira): {te}")
+                    
+                    with open(earn_file_path, 'w', encoding='utf-8') as f:
+                        json.dump([], f, indent=2, ensure_ascii=False)
+                    add_log("PIX: Registro de investimentos Earn zerado.")
+                else:
+                    add_log("PIX: Nenhum investimento ativo em Earn para resgatar.")
+            except Exception as ee:
+                add_log(f"PIX ERRO: Falha ao resgatar investimentos Earn: {ee}")
+                
+        # 5. Consolidar moedas residuais da conta Funding (Financiamento) para UTA (Negociação)
+        try:
+            funding_balances = {}
+            try:
+                raw_funding = exchange.fetch_balance({'type': 'funding'})
+                for coin, balance_info in raw_funding.get('total', {}).items():
+                    if balance_info > 0:
+                        funding_balances[coin] = balance_info
+            except:
+                try:
+                    resp_fund = exchange.privateGetV5AssetTransferQueryAccountCoinsBalance({
+                        'accountType': 'FUNDING'
+                    })
+                    for c_data in resp_fund.get('result', {}).get('balance', []):
+                        c_name = c_data.get('coin')
+                        c_bal = float(c_data.get('walletBalance') or 0)
+                        if c_bal > 0:
+                            funding_balances[c_name] = c_bal
+                except:
+                    pass
+            
+            for coin, amount in funding_balances.items():
+                if amount > 0:
+                    add_log(f"PIX: Movendo {amount} {coin} de Financiamento para UTA...")
+                    try:
+                        bybit_transfer_direct(coin, amount, 'funding', 'unified')
+                    except Exception as te:
+                        add_log(f"PIX AVISO: Falha ao mover {coin} de Financiamento: {te}")
+        except Exception as fe:
+            add_log(f"PIX AVISO: Erro ao varrer saldos de Financiamento: {fe}")
+            
+        time.sleep(2.0)  # Aguarda sincronização das transferências
+        
+        # 6. Converter todas as criptomoedas em UTA para USDT (Spot)
+        try:
+            resp_unified = exchange.privateGetV5AccountWalletBalance({'accountType': 'UNIFIED'})
+            account_unified = resp_unified.get('result', {}).get('list', [{}])[0]
+            
+            unified_coins = []
+            for coin_info in account_unified.get('coin', []):
+                coin_name = coin_info.get('coin')
+                coin_bal = float(coin_info.get('walletBalance') or 0)
+                # Pula USDT e BRL, pois convertemos tudo para USDT primeiro, depois USDT para BRL
+                if coin_bal > 0 and coin_name not in ['USDT', 'BRL']:
+                    unified_coins.append((coin_name, coin_bal))
+            
+            if unified_coins:
+                exchange.load_markets()
+                for coin_name, coin_bal in unified_coins:
+                    symbol = f"{coin_name}/USDT"
+                    try:
+                        if symbol in exchange.markets:
+                            market = exchange.market(symbol)
+                            min_amount = market['limits']['amount']['min']
+                            
+                            if coin_bal < min_amount:
+                                add_log(f"PIX AVISO: Saldo de {coin_name} ({coin_bal:.6f}) é inferior ao mínimo para venda ({min_amount:.6f}).")
+                                continue
+                                
+                            amount_precision = float(exchange.amount_to_precision(symbol, coin_bal))
+                            if amount_precision >= min_amount:
+                                add_log(f"PIX: Vendendo {amount_precision} {coin_name} por USDT no mercado Spot...")
+                                exchange.create_order(symbol, 'market', 'sell', amount_precision)
+                                add_log(f"PIX SUCESSO: Venda de {coin_name} concluída.")
+                            else:
+                                add_log(f"PIX AVISO: Saldo formatado de {coin_name} ({amount_precision:.6f}) ficou abaixo do mínimo.")
+                        else:
+                            add_log(f"PIX AVISO: Par de negociação {symbol} não está disponível na Bybit Spot.")
+                    except Exception as se:
+                        add_log(f"PIX ERRO: Falha ao vender {coin_name} por USDT: {se}")
+            else:
+                add_log("PIX: Nenhuma outra criptomoeda para vender por USDT.")
+        except Exception as ue:
+            add_log(f"PIX ERRO: Falha ao consolidar criptoativos em USDT: {ue}")
+            
+        time.sleep(2.0)  # Aguarda processamento das ordens spot
+        
+        # 7. Vender todo o USDT para BRL (Spot)
+        try:
+            resp_unified = exchange.privateGetV5AccountWalletBalance({'accountType': 'UNIFIED'})
+            account_unified = resp_unified.get('result', {}).get('list', [{}])[0]
+            usdt_balance = 0.0
+            for coin_info in account_unified.get('coin', []):
+                if coin_info.get('coin') == 'USDT':
+                    usdt_balance = float(coin_info.get('walletBalance') or 0)
+                    break
+            
+            if usdt_balance > 0.1:
+                symbol = 'USDT/BRL'
+                exchange.load_markets()
+                if symbol in exchange.markets:
+                    market = exchange.market(symbol)
+                    min_amount = market['limits']['amount']['min']
+                    
+                    amount_precision = float(exchange.amount_to_precision(symbol, usdt_balance))
+                    if amount_precision >= min_amount:
+                        add_log(f"PIX: Vendendo {amount_precision:.2f} USDT para BRL no Spot...")
+                        exchange.create_order(symbol, 'market', 'sell', amount_precision)
+                        add_log("PIX SUCESSO: Conversão de USDT para BRL realizada.")
+                    else:
+                        add_log(f"PIX AVISO: Saldo de USDT ({amount_precision:.2f}) é menor que o lote mínimo ({min_amount:.2f}).")
+                else:
+                    add_log("PIX ERRO: Mercado USDT/BRL não disponível para conversão.")
+            else:
+                add_log("PIX: Nenhum saldo significativo de USDT para converter.")
+        except Exception as ube:
+            add_log(f"PIX ERRO: Falha ao converter USDT para BRL: {ube}")
+            
+        time.sleep(2.0)  # Aguarda sincronização das contas
+        
+        # 8. Mover todo o BRL da UTA para a conta de Financiamento
+        try:
+            resp_unified = exchange.privateGetV5AccountWalletBalance({'accountType': 'UNIFIED'})
+            account_unified = resp_unified.get('result', {}).get('list', [{}])[0]
+            brl_balance = 0.0
+            for coin_info in account_unified.get('coin', []):
+                if coin_info.get('coin') == 'BRL':
+                    brl_balance = float(coin_info.get('walletBalance') or 0)
+                    break
+            
+            if brl_balance > 1.0:
+                add_log(f"PIX: Enviando {brl_balance:.2f} BRL de UTA para a carteira de Financiamento...")
+                bybit_transfer_direct('BRL', brl_balance, 'unified', 'funding')
+                add_log(f"🎉 [SUCESSO] Consolidação concluída! R$ {brl_balance:.2f} BRL estão disponíveis na carteira de Financiamento prontos para transferência via PIX.")
+            else:
+                add_log("PIX: Saldo final de BRL em UTA é muito baixo para transferência (inferior a R$ 1.00).")
+        except Exception as fte:
+            add_log(f"PIX ERRO: Falha ao transferir BRL final para Financiamento: {fte}")
+            
+        return jsonify({"message": "Processo de consolidação concluído.", "status": "ok"})
+    except Exception as e:
+        err_msg = str(e)
+        add_log(f"❌ [ERRO CRÍTICO PIX] Falha geral na consolidação: {err_msg}")
+        return jsonify({"error": err_msg}), 500
 
 @app.route('/api/history')
 def get_history():
@@ -713,12 +962,18 @@ def start_bot():
     strategy = data.get('strategy', 'spot')
     symbol = data.get('symbol', 'BTC/USDT:USDT')
     
-    estrategias_multi = ['survival', 'reverse_martingale', 'scalping_10x', 'sniper', 'chameleon', 'fibonacci', 'daily_range', 'ema_rsi', 'vwap_deviation']
+    estrategias_multi = ['survival', 'reverse_martingale', 'scalping_10x', 'sniper', 'chameleon', 'fibonacci', 'daily_range', 'ema_rsi', 'vwap_deviation', 'candlestick_rsi']
     if symbol == 'MULTI' and strategy not in estrategias_multi:
         add_log(f"⚠️ A estratégia '{strategy}' não suporta MULTI. Usando BTC por padrão.")
         symbol = 'BTC/USDT:USDT'
     
-    if strategy == 'sniper':
+    if strategy == 'candlestick_rsi':
+        from strategies.candlestick_rsi_scalper import run_candlestick_rsi_strategy
+        if symbol != 'MULTI' and ':' not in symbol:
+            symbol = symbol.split('/')[0] + '/USDT:USDT'
+        add_log(f"Comando de INICIAR CANDLESTICK + RSI SCALPER recebido para {symbol}...")
+        thread = threading.Thread(target=run_candlestick_rsi_strategy, args=(exchange, symbol))
+    elif strategy == 'sniper':
         add_log(f"Comando de INICIAR SNIPER recebido para {symbol}...")
         thread = threading.Thread(target=run_sniper_leverage, args=(exchange, symbol))
     elif strategy == 'martingale':
@@ -793,10 +1048,20 @@ def stop_bot():
     if not bot_state["is_running"]:
         return jsonify({"message": "Bot já está parado."}), 400
         
-    add_log("Comando de PARAR recebido. Aguardando ciclo terminar...")
+    add_log("Comando de PARAR recebido. Cancelando ordens e desligando...")
     bot_state["is_running"] = False
     
-    return jsonify({"message": "Bot está sendo desligado..."})
+    # Cancela ordens ativas para liberar margem
+    global exchange
+    if not exchange:
+        exchange = get_exchange()
+    try:
+        exchange.cancel_all_orders(symbol=None, params={'category': 'linear', 'settleCoin': 'USDT'})
+        add_log("Todas as ordens limite pendentes foram canceladas automaticamente ao parar o bot.")
+    except Exception as e:
+        add_log(f"Aviso ao cancelar ordens pendentes: {e}")
+        
+    return jsonify({"message": "Bot está sendo desligado e ordens pendentes foram canceladas."})
 
 if __name__ == '__main__':
     print("Iniciando Servidor Web do Bot...")
