@@ -1,19 +1,32 @@
 {
+  "claude_quant_alpha": {
+    "max_leverage": 10,
+    "risk_per_trade": 0.025,
+    "max_daily_loss_pct": 0.06,
+    "min_rr": 1.8,
+    "max_concurrent_positions": 2
+  },
+  "grok_whale_flow": {
+    "max_leverage": 12,
+    "risk_per_trade": 0.025,
+    "max_daily_loss_pct": 0.06,
+    "min_rr": 1.8,
+    "max_concurrent_positions": 2
+  },
   "survival_scalper": {
-    "max_leverage": 20,
-    "risk_per_trade": 0.20,
-    "max_daily_loss_pct": 0.30,
-    "min_balance": 3.0,
+    "max_leverage": 12,
+    "risk_per_trade": 0.03,
+    "max_daily_loss_pct": 0.08,
+    "min_balance": 2.5,
     "take_profit_pct": 0.90,
-    "stop_loss_pct": 0.30,
-    "cooldown_seconds": 120,
-    "min_winrate_to_continue": 40
+    "stop_loss_pct": 0.45,
+    "cooldown_seconds": 45
   },
   "sniper": {
-    "max_leverage": 50,
-    "risk_per_trade": 0.10,
-    "max_daily_loss_pct": 0.50,
-    "take_profit_pct": 0.8,
+    "max_leverage": 12,
+    "risk_per_trade": 0.025,
+    "max_daily_loss_pct": 0.06,
+    "take_profit_pct": 1.2,
     "stop_loss_pct": 0.6
   }
 }

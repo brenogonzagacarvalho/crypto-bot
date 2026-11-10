@@ -11,6 +11,11 @@ async function fetchStatus() {
 }
 
 function updateUI(data) {
+    const apiBanner = document.getElementById('api-key-banner');
+    if (apiBanner) {
+        apiBanner.style.display = (data.api_configured === false) ? 'block' : 'none';
+    }
+
     // Atualiza Botões e Status
     const btnStop = document.getElementById('btn-stop');
     const badge = document.getElementById('status-badge');
@@ -21,19 +26,23 @@ function updateUI(data) {
         btnStop.disabled = false;
         badge.textContent = data.status;
         
-        if(data.status.includes('Sniper')) {
+        if(data.status.includes('Claude')) {
+            badge.style.borderColor = "#8b5cf6";
+            badge.style.color = "#8b5cf6";
+            badge.style.boxShadow = "0 0 10px rgba(139,92,246,0.5)";
+        } else if(data.status.includes('Grok')) {
+            badge.style.borderColor = "#0ea5e9";
+            badge.style.color = "#0ea5e9";
+            badge.style.boxShadow = "0 0 10px rgba(14,165,233,0.5)";
+        } else if(data.status.includes('Sniper')) {
             badge.style.borderColor = "#f97316";
             badge.style.color = "#f97316";
             badge.style.boxShadow = "0 0 10px rgba(249,115,22,0.4)";
-        } else if(data.status.includes('Martingale') && !data.status.includes('Rev')) {
-            badge.style.borderColor = "#8b5cf6";
-            badge.style.color = "#8b5cf6";
-            badge.style.boxShadow = "0 0 10px rgba(139,92,246,0.4)";
         } else if(data.status.includes('Scalper')) {
             badge.style.borderColor = "#3b82f6";
             badge.style.color = "#3b82f6";
             badge.style.boxShadow = "0 0 10px rgba(59,130,246,0.4)";
-        } else if(data.status.includes('Rev. Martingale')) {
+        } else if(data.status.includes('Anti-Martingale') || data.status.includes('Rev. Martingale')) {
             badge.style.borderColor = "#ef4444";
             badge.style.color = "#ef4444";
             badge.style.boxShadow = "0 0 10px rgba(239,68,68,0.4)";
@@ -45,14 +54,10 @@ function updateUI(data) {
             badge.style.borderColor = "#c084fc";
             badge.style.color = "#c084fc";
             badge.style.boxShadow = "0 0 10px rgba(192,132,252,0.4)";
-        } else if(data.status.includes('VWAP Dev')) {
+        } else if(data.status.includes('VWAP')) {
             badge.style.borderColor = "#38bdf8";
             badge.style.color = "#38bdf8";
             badge.style.boxShadow = "0 0 10px rgba(56,189,248,0.4)";
-        } else if(data.status.includes('Scalping (10x)')) {
-            badge.style.borderColor = "#10b981";
-            badge.style.color = "#10b981";
-            badge.style.boxShadow = "0 0 10px rgba(16,185,129,0.4)";
         } else {
             badge.style.borderColor = "var(--crypto-green)";
             badge.style.color = "var(--crypto-green)";
@@ -135,12 +140,16 @@ function updateUI(data) {
 async function startBot(strategyType = 'spot') {
     const selectedCoin = document.getElementById('coin-selector').value;
     
-    if (selectedCoin === "MULTI" && strategyType !== "scalping_10x" && strategyType !== "reverse_martingale" && strategyType !== "sniper" && strategyType !== "survival" && strategyType !== "chameleon" && strategyType !== "fibonacci" && strategyType !== "daily_range" && strategyType !== "ema_rsi" && strategyType !== "vwap_deviation") {
-        alert("O modo Scanner MULTI está disponível apenas nas estratégias: Survival Scalper, Scalping 10x, Reverse Martingale, Alavancagem Sniper, Camaleão, Retração Fibonacci, Mínima/Máxima Diária, EMA Cross + RSI e VWAP Deviation.");
+    const multiSupported = [
+        "claude_alpha", "grok_flow", "reverse_martingale", "sniper", "survival",
+        "chameleon", "fibonacci", "daily_range", "ema_rsi", "vwap_deviation", "candlestick_rsi"
+    ];
+    if (selectedCoin === "MULTI" && !multiSupported.includes(strategyType)) {
+        alert("O modo Scanner MULTI não está disponível para estratégias Spot ou Hedge isolado. Selecione uma moeda específica ou uma estratégia Quant Derivativos.");
         return;
     }
     
-    const isDerivatives = strategyType === 'sniper' || strategyType === 'martingale' || strategyType === 'trend' || strategyType === 'reverse_martingale' || strategyType === 'scalping_10x' || strategyType === 'survival' || strategyType === 'longshort_lev' || strategyType === 'double7' || strategyType === 'chameleon' || strategyType === 'fibonacci' || strategyType === 'daily_range' || strategyType === 'ema_rsi' || strategyType === 'vwap_deviation';
+    const isDerivatives = strategyType !== 'spot';
     
     let symbol = "";
     if (selectedCoin === "MULTI") {
@@ -170,6 +179,32 @@ async function stopBot() {
         fetchStatus();
     } catch (error) {
         alert("Erro ao parar bot");
+    }
+}
+
+async function saveBybitKeys() {
+    const apiKey = document.getElementById('input-bybit-key').value.trim();
+    const apiSecret = document.getElementById('input-bybit-secret').value.trim();
+    if (!apiKey || !apiSecret) {
+        alert("Preencha BYBIT_API_KEY e BYBIT_API_SECRET.");
+        return;
+    }
+    try {
+        const res = await fetch('/api/config/keys', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ api_key: apiKey, api_secret: apiSecret })
+        });
+        const data = await res.json();
+        if (res.ok) {
+            alert(data.message || "Chaves salvas com sucesso!");
+            fetchStatus();
+            fetchPositions();
+        } else {
+            alert(data.error || "Falha ao autenticar chaves na Bybit.");
+        }
+    } catch (err) {
+        alert("Erro ao salvar chaves da API.");
     }
 }
 

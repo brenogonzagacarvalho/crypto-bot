@@ -1,66 +1,65 @@
 import sys
 from core.connection import get_exchange, check_connection
-from strategies.alerts import run_alerts
-from strategies.trend_algo import run_trend_following_simulated
-from strategies.grid_algo import run_grid_trading_simulated
+from strategies.claude_quant_alpha import run_claude_quant_alpha
+from strategies.grok_whale_flow import run_grok_whale_flow
+from strategies.chameleon_strategy import run_chameleon_strategy
+from strategies.fibonacci_retracement import run_fibonacci_strategy
+from strategies.vwap_deviation_scalper import run_vwap_deviation_strategy
+from strategies.daily_range_scalper import run_daily_range_strategy
 from strategies.live_predictor import run_live_predictor
 
+
 def show_menu():
-    print("\n===================================")
-    print("🤖 MENU DO BOT DE CRIPTO (BYBIT)")
-    print("===================================")
-    print("1. Iniciar Alertas de Preço")
-    print("2. Iniciar Trend Following (1 Minuto + Gravar CSV)")
-    print("3. Iniciar Grid Trading (Modo Simulação)")
-    print("4. ⚠️ Bot LIVE: Previsão e Transações REAIS")
-    print("5. Sair")
-    print("===================================")
-    
-    choice = input("Escolha a estratégia desejada (1-5): ")
-    return choice
+    print("\n====================================================")
+    print("🤖 BYBIT QUANT DESK CLI (SKILLS CLAUDE & GROK)")
+    print("====================================================")
+    print("1. 🤖 Claude Quant Alpha (TTM Squeeze + MTF + VWAP)")
+    print("2. 🧠 Grok Whale Flow (Order Book Imbalance + Squeeze)")
+    print("3. 🦎 Camaleão Quant (Regime Adaptativo 3M)")
+    print("4. 📐 Retração Fibonacci 61.8% (OTF Golden Pocket)")
+    print("5. 🌊 VWAP Z-Score Mean Reversion")
+    print("6. 📐 Liquidez Diária (PDH/PDL Sweep)")
+    print("7. 🛡️ Spot Predictor (Sem Alavancagem)")
+    print("8. Sair")
+    print("====================================================")
+
+    return input("Escolha a estratégia desejada (1-8): ").strip()
+
 
 def main():
-    print("Iniciando Bot...")
+    print("Iniciando Quant Desk CLI...")
     exchange = get_exchange()
-    
+
     if not check_connection(exchange):
         return
-        
+
     while True:
         choice = show_menu()
-        
-        symbol = 'BTC/USDT'
-        
-        if choice == '1':
-            try:
-                target_h = float(input("Qual o preço alvo para Alta (Ex: 70000)? [Deixe vazio para pular]: ") or 0)
-                target_l = float(input("Qual o preço alvo para Baixa (Ex: 60000)? [Deixe vazio para pular]: ") or 0)
-                
-                run_alerts(
-                    exchange, 
-                    symbol=symbol, 
-                    target_high=target_h if target_h > 0 else None, 
-                    target_low=target_l if target_l > 0 else None
-                )
-            except ValueError:
-                print("Valor inválido. Tente novamente.")
-                
-        elif choice == '2':
-            print("\nAviso: O Trend Following requer buscar dezenas de candles do histórico, aguarde...")
-            run_trend_following_simulated(exchange, symbol=symbol)
-            
-        elif choice == '3':
-            run_grid_trading_simulated(exchange, symbol=symbol)
-            
-        elif choice == '4':
-            print("\n🚨 AVISO: MODO LIVE ATIVADO! Dinheiro real será movimentado.")
-            run_live_predictor(exchange, symbol=symbol)
-            
-        elif choice == '5':
+        if choice == '8':
             print("Encerrando bot. Até mais!")
             sys.exit(0)
+
+        coin = input("Moeda ou MULTI [Padrão: MULTI]: ").strip().upper() or "MULTI"
+        symbol = "MULTI" if coin == "MULTI" else f"{coin}/USDT:USDT"
+
+        if choice == '1':
+            run_claude_quant_alpha(exchange, symbol=symbol)
+        elif choice == '2':
+            run_grok_whale_flow(exchange, symbol=symbol)
+        elif choice == '3':
+            run_chameleon_strategy(exchange, symbol=symbol)
+        elif choice == '4':
+            run_fibonacci_strategy(exchange, symbol=symbol)
+        elif choice == '5':
+            run_vwap_deviation_strategy(exchange, symbol=symbol)
+        elif choice == '6':
+            run_daily_range_strategy(exchange, symbol=symbol)
+        elif choice == '7':
+            spot_sym = "BTC/USDT" if coin == "MULTI" else f"{coin}/USDT"
+            run_live_predictor(exchange, symbol=spot_sym)
         else:
-            print("Opção inválida. Escolha entre 1 e 5.")
+            print("Opção inválida. Escolha entre 1 e 8.")
+
 
 if __name__ == '__main__':
     main()

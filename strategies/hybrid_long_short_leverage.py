@@ -13,12 +13,17 @@ import os
 import csv
 from datetime import datetime
 from enum import Enum
-import pandas as pd
-import numpy as np
-import ccxt
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from core.market_data import fetch_historical_data, calculate_rsi
+from core.market_data import (
+    fetch_historical_data,
+    calculate_rsi,
+    calculate_ema,
+    calculate_macd,
+    calculate_atr,
+    calculate_bollinger_bands,
+    calculate_adx,
+)
 from core.shared_state import bot_state, add_log
 from core.balance_utils import get_unified_balance
 
@@ -75,7 +80,7 @@ def log_trade(symbol, regime, action, side, size_usdt, lev, entry, exit_p, pnl,
 # INDICADORES (mesma lógica do spot, mas com alguns ajustes)
 # -------------------------------------------------------------------
 def calculate_all_indicators(closes_5m, closes_15m, closes_1h, highs, lows, volumes):
-    if len(closes_5m) < 50:
+    if len(closes_5m) < 55:
         return None
 
     current_price = closes_5m[-1]
@@ -84,22 +89,20 @@ def calculate_all_indicators(closes_5m, closes_15m, closes_1h, highs, lows, volu
     rsi_15m = calculate_rsi(closes_15m, 14) if len(closes_15m) >= 14 else rsi_5m
     rsi_1h = calculate_rsi(closes_1h, 14) if len(closes_1h) >= 14 else rsi_5m
 
-    closes_series = pd.Series(closes_5m)
-    ema_9 = closes_series.ewm(span=9, adjust=False).mean().iloc[-1]
-    ema_21 = closes_series.ewm(span=21, adjust=False).mean().iloc[-1]
-    ema_55 = closes_series.ewm(span=55, adjust=False).mean().iloc[-1]
+    ema_9 = calculate_ema(closes_5m, 9) or current_price
+    ema_21 = calculate_ema(closes_5m, 21) or current_price
+    ema_55 = calculate_ema(closes_5m, 55) or current_price
 
-    ema_12 = closes_series.ewm(span=12, adjust=False).mean()
-    ema_26 = closes_series.ewm(span=26, adjust=False).mean()
-    macd_line = ema_12 - ema_26
-    signal_line = macd_line.ewm(span=9, adjust=False).mean()
-    macd_histogram = macd_line.iloc[-1] - signal_line.iloc[-1]
+    _, _, macd_histogram = calculate_macd(closes_5m)
+    macd_histogram = macd_histogram or 0.0
 
-    atr = calculate_atr(highs, lows, closes_5m, 14)
+    ohlcv_5m_dict = {'h': highs, 'l': lows, 'c': closes_5m, 'v': volumes}
+    atr = calculate_atr(ohlcv_5m_dict, 14) or 0.0
     volatility_pct = (atr / current_price * 100) if atr and current_price > 0 else 0
-    bb_width = calculate_bb_width(closes_5m)
+    bb = calculate_bollinger_bands(closes_5m, 20, 2.0)
+    bb_width = bb["width_pct"] if bb else 0.0
     vol_ratio = calculate_volume_ratio(volumes)
-    adx = calculate_simple_adx(highs, lows, closes_5m, 14)
+    adx, _, _ = calculate_adx(ohlcv_5m_dict, 14)
 
     return {
         'current_price': current_price,
@@ -116,54 +119,12 @@ def calculate_all_indicators(closes_5m, closes_15m, closes_1h, highs, lows, volu
         'adx': adx
     }
 
-def calculate_atr(highs, lows, closes, period=14):
-    if len(closes) < period:
-        return 0
-    tr_list = []
-    for i in range(1, min(len(highs), len(lows), len(closes))):
-        h, l, c_prev = highs[i], lows[i], closes[i-1]
-        tr = max(h - l, abs(h - c_prev), abs(l - c_prev))
-        tr_list.append(tr)
-    return pd.Series(tr_list).rolling(period).mean().iloc[-1] if tr_list else 0
-
-def calculate_bb_width(closes, period=20):
-    if len(closes) < period:
-        return 0
-    s = pd.Series(closes)
-    sma = s.rolling(period).mean()
-    std = s.rolling(period).std()
-    upper = sma + 2 * std
-    lower = sma - 2 * std
-    return ((upper - lower) / sma).iloc[-1] * 100
-
 def calculate_volume_ratio(volumes, short_period=5, long_period=20):
     if len(volumes) < long_period:
         return 1.0
-    vol_series = pd.Series(volumes)
-    short_avg = vol_series.rolling(short_period).mean().iloc[-1]
-    long_avg = vol_series.rolling(long_period).mean().iloc[-1]
+    short_avg = sum(volumes[-short_period:]) / short_period
+    long_avg = sum(volumes[-long_period:]) / long_period
     return short_avg / long_avg if long_avg > 0 else 1.0
-
-def calculate_simple_adx(highs, lows, closes, period=14):
-    if len(closes) < period * 2:
-        return 25
-    tr_list, plus_dm, minus_dm = [], [], []
-    for i in range(1, len(closes)):
-        h, l, c = highs[i], lows[i], closes[i]
-        h_prev, l_prev, c_prev = highs[i-1], lows[i-1], closes[i-1]
-        tr = max(h - l, abs(h - c_prev), abs(l - c_prev))
-        tr_list.append(tr)
-        up_move = h - h_prev
-        down_move = l_prev - l
-        plus_dm.append(up_move if (up_move > down_move and up_move > 0) else 0)
-        minus_dm.append(down_move if (down_move > up_move and down_move > 0) else 0)
-    tr_smooth = pd.Series(tr_list).ewm(alpha=1/period, adjust=False).mean().iloc[-1]
-    plus_dm_smooth = pd.Series(plus_dm).ewm(alpha=1/period, adjust=False).mean().iloc[-1]
-    minus_dm_smooth = pd.Series(minus_dm).ewm(alpha=1/period, adjust=False).mean().iloc[-1]
-    plus_di = (plus_dm_smooth / tr_smooth * 100) if tr_smooth > 0 else 0
-    minus_di = (minus_dm_smooth / tr_smooth * 100) if tr_smooth > 0 else 0
-    dx = abs(plus_di - minus_di) / (plus_di + minus_di) * 100 if (plus_di + minus_di) > 0 else 0
-    return dx
 
 # -------------------------------------------------------------------
 # DETECÇÃO DE REGIME (idêntica à versão spot)
@@ -574,9 +535,6 @@ def run_leveraged_long_short(exchange, symbol='BTC/USDT:USDT', leverage=None):
 
     except KeyboardInterrupt:
         add_log("Interrompido pelo usuário.")
-    except ccxt.RateLimitExceeded as e:
-        add_log("Rate limit excedido, aguardando 60s...")
-        time.sleep(60)
     except Exception as e:
         add_log(f"💥 ERRO: {e}")
         if "Too many visits" in str(e) or "10006" in str(e):

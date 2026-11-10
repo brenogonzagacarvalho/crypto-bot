@@ -8,8 +8,6 @@ import sys
 import os
 import csv
 from datetime import datetime
-import pandas as pd
-import numpy as np
 
 from core.market_data import fetch_ohlcv_data, calculate_rsi, calculate_ema, calculate_macd
 from core.shared_state import bot_state, add_log

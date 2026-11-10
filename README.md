@@ -1,77 +1,54 @@
-# Bybit Trade Bot 🤖📈
+# Bybit Quant Trading Desk 🤖📈 (Claude & Grok Skills Edition)
 
-Um robô de trading automatizado focado na exchange **Bybit**, encapsulado em um aplicativo Desktop nativo. O bot possui interface gráfica, integração com Unified Trading Account (UTA) e múltiplas estratégias de operações que variam do formato super conservador até alavancagem extrema em derivativos.
+Um robô quantitativo de negociação automatizada para **Bybit V5 (Unified Trading Account - UTA)** com interface Desktop/Web em tempo real, arquitetura de **Skills Agênticas (`Claude` & `Grok`)** e motor institucional de risco e execução (`core/quant_skills.py`).
 
-## 🚀 Funcionalidades
+---
 
-- **Dashboard Gráfico Local:** Interface construída com HTML/CSS/JS renderizada via `pywebview` e servida em `Flask`, rodando direto na sua máquina (sem necessidade de servidor em nuvem).
-- **Múltiplas Estratégias:** Algoritmos variados para diferentes perfis de risco e metas de lucro.
-- **Suporte a Derivativos (Futuros):** Operações com alavancagem de até 100x configuradas automaticamente pelo bot.
-- **Integração V5 Bybit:** Conexão robusta utilizando a API v5 e suporte nativo à Carteira Unificada (Unified Trading Account).
-- **Gerenciamento de Risco:** Ordens de Stop Loss (SL) e Take Profit (TP) enviadas na mesma transação.
+## 🧩 Agent Skills Instaladas (`.agents/skills/` & `.claude/skills/`)
 
-## 🧠 Estratégias Inclusas
+O repositório incorpora 6 skills especializadas inspiradas nos ecossistemas **Claude Trading Skills (`claude-trader`)** e **Grok Trading Desk (`hypergrok-trading-desk` / `PumpGrok`)**:
 
-1. **Spot (Seguro) / Live Predictor:** Opera no mercado à vista com pontuação via múltiplos indicadores. Ajustado para ser mais ágil, aceita sinais de mercado mais rápidos e não exige cooldown longo entre operações.
-2. **Scalping 10x ($15/sem):** Estratégia de consistência que visa pequenos lucros frequentes. Operações mais agressivas (RSI estendido e dispensa de MACD) para mais volume de trades.
-3. **Trend Scalper (EMA):** Utiliza cruzamento de médias móveis exponenciais (EMA 9 e EMA 21) para surfar as ondas de tendência.
-4. **Survival Scalper:** Focado em sobrevivência de bancas muito pequenas ($3-$6). Conta com entradas frequentes baseadas no RSI (45/55) e um rápido recarregamento de cooldown (30s) para maximizar o número de negociações.
-5. **Martingale RSI:** Estratégia de alto risco que usa o Martingale clássico, dobrando a posição após um _loss_ (baseado em suportes e resistências).
-6. **Reverse Martingale ($100/dia):** Altíssimo risco/retorno. Opera com 100x de alavancagem e dobra a mão **apenas quando ganha** (Soros). Em 5-6 vitórias consecutivas transforma $1 em $100.
-7. **Alavancagem Sniper:** Entradas do tipo All-In focadas em topos/fundos. Gatilhos de RSI mais flexíveis (<= 45 LONG / >= 55 SHORT) para aumentar as oportunidades.
-8. **Hybrid Long/Short:** Posições de Hedge em mercado futuro, mantendo operações Short e Long ao mesmo tempo. Ajustado para efetuar micro-balanceamentos (sensibilidade de 2%) e operar até mesmo em cenários laterais consolidados (CHOPPY).
+1. **`desk-regime-analyst`**: Classificação multi-timeframe (15m + 5m/3m) de regime de mercado (`STRONG_BULL`, `STRONG_BEAR`, `RANGING`, `SQUEEZE_BUILDUP`, `CHOPPY_NO_TRADE`), detector de **TTM Volatility Squeeze** (Bollinger vs Keltner), **ADX (14)** e **VWAP Institucional com Bandas ($\pm 1\sigma, \pm 2\sigma, \pm 3\sigma$)**.
+2. **`microstructure-funding-scanner`**: Leitura de microestrutura L2 (**Order Book Imbalance - OBI**), detecção de **Spoofing / Liquidez Rasa**, **Funding Rate Squeeze** e **Volume Relativo (`RVOL`)**.
+3. **`risk-officer-guardrails`**: Dimensionamento baseado na distância real do Stop Loss (`calc_position_size`), trava de perda máxima diária (**Daily Drawdown Circuit Breaker**), filtro de correlação de portfólio e alavancagem adaptativa segura.
+4. **`bybit-v5-execution-protocol`**: Execução atômica na Bybit V5 com `stopLoss`, `takeProfit`, `slTriggerBy: MarkPrice` na própria ordem de abertura, formatação dinâmica de precisão (`price_to_precision` / `amount_to_precision`) e sincronização real do **Trailing Stop** na corretora (`privatePostV5PositionTradingStop`).
+5. **`quant-strategy-lab`**: Padrões de arquitetura para criação e refatoração de estratégias sem bloqueio de thread, sem Martingale tóxico e com expectativa matemática positiva ($EV > 0$).
+6. **`post-trade-journal-auditor`**: Auditoria estatística pós-trade (`Win Rate`, `Profit Factor`, `Expectancy`, `Sharpe`, `Max Drawdown`) com script CLI em `.agents/skills/post-trade-journal-auditor/scripts/audit_performance.py`.
 
-### ⚡ Atualizações Recentes de Agressividade
-Visando aumentar consideravelmente a frequência de trading em 3x a 5x (trade-off por assumir taxas extras e falsos sinais), as estratégias passaram por flexibilizações:
-- Bloqueios em mercados de regime lateral (`CHOPPY`) foram suspensos ou atenuados.
-- Tempos de espera e resfriamento sistêmico (`cooldown`) entre operações foram drasticamente reduzidos ou zerados.
-- O rigor de indicadores de confirmação secundária (como EMA e MACD em estratégias Scalper) e limites muito extremos de RSI (< 30, > 70) deram espaço para faixas mais brandas (< 45, > 55).
+---
 
-## ⚙️ Instalação e Configuração
+## 🚀 Estratégias Quantitativas Ativas
 
-### 1. Pré-requisitos
-- Python 3.9+ instalado
-- Conta na Bybit com API Keys geradas (permissões de Leitura e Trade em Spot e Contratos).
+### Novas Estratégias Flagship (Claude & Grok)
+1. **🤖 Claude Quant Alpha (`strategies/claude_quant_alpha.py`)**
+   - **Tese**: Combina o **TTM Volatility Squeeze Breakout** e **Trend Pullback** com filtro Macro 15m (`EMA 200` + `ADX`) e **Exhaustion Reversion** na banda de $\pm 2.2\sigma$ da VWAP quando o mercado está lateral (`RANGING`).
+2. **🧠 Grok Whale Flow (`strategies/grok_whale_flow.py`)**
+   - **Tese**: Detecta agressão institucional no livro de ofertas (**OBI L2**), **Funding Rate Squeeze** (short/long squeeze contra posicionamento sobrecarregado do varejo) e **Liquidity Sweep** com ignição de volume (`RVOL >= 1.3x`).
 
-### 2. Clonando o Repositório
-```bash
-git clone https://github.com/SEU_USUARIO/crypto-bot.git
-cd crypto-bot
-```
+### Estratégias Refatoradas com `core/quant_skills.py`
+3. **📐 Retração Fibonacci 61.8% OTF (`strategies/fibonacci_retracement.py`)**: Swing High/Low dinâmico, confluência com banda Golden Pocket (`50% - 65%`), `RVOL`, `OBI` e `TrailingStopEngine` sincronizado na Bybit.
+4. **🦎 Camaleão Quant (`strategies/chameleon_strategy.py`)**: Alterna automaticamente entre **Trend Pullback** (`ADX >= 22`) e **VWAP Mean Reversion** (`RANGING`) em velas de 3m com confirmação macro de 15m.
+5. **🌊 VWAP Z-Score Mean Reversion (`strategies/vwap_deviation_scalper.py`)**: Opera Long e Short em desvios estatísticos ($\pm 2.0\sigma$) da VWAP com rejeição de pavio e Stop Loss nativo baseado em `ATR`.
+6. **📐 Liquidez Diária PDH/PDL Sweep (`strategies/daily_range_scalper.py`)**: Opera armadilhas de liquidez (*Stop Hunts / SFP*) nas máximas e mínimas do dia anterior (`PDH`/`PDL`) tanto na ponta compradora quanto vendedora.
+7. **⚡ EMA Ribbon + RSI + ADX (`strategies/ema_rsi_scalper.py`)**: Scalper bidirecional (Long & Short) com alinhamento de `EMA 9 > EMA 21 > EMA 50`, `ADX >= 20`, `RVOL` e Stop Loss estrutural.
+8. **🕯️ Candlestick + RSI + RVOL (`strategies/candlestick_rsi_scalper.py`)**: Reconhecimento anatômico de padrões (*Hammer*, *Shooting Star*, *Bullish/Bearish Engulfing*) nos extremos de RSI e bandas de Bollinger com ciclo completo de gerenciamento de posição.
+9. **⚔️ Survival Scalper (`strategies/survival_scalper.py`)**: Projetado para contas pequenas com alavancagem adaptativa controlada (`8x-12x`), Stop Loss obrigatório na corretora e validação de lote mínimo Bybit V5.
+10. **🎯 Sniper RVOL (`strategies/sniper_leverage.py`)** & **🔥 Anti-Martingale Pro (`strategies/reverse_martingale_pro.py`)**: Operações de convicção máxima e piramidação apenas com lucro acumulado da banca, com `TrailingStopEngine` sincronizado na Bybit.
 
-### 3. Instalando Dependências
-Instale as bibliotecas necessárias para rodar o projeto:
-```bash
-pip install flask ccxt pywebview
-```
+*(Estratégias tóxicas ou quebradas como Martingale Clássico, Dobrar em 7 Dias e algoritmos sem Stop Loss foram removidas para proteção da conta).*
 
-### 4. Configurando Variáveis de Ambiente
-Crie um arquivo chamado `.env` na raiz do projeto (mesmo local do `desktop_app.py`) com as suas chaves da Bybit:
-
-```env
-BYBIT_API_KEY=sua_api_key_aqui
-BYBIT_API_SECRET=seu_api_secret_aqui
-```
+---
 
 ## ▶️ Como Usar
 
-Para rodar o bot como um **Aplicativo Desktop**, execute:
-
+### Aplicativo Desktop ou Dashboard Web
 ```bash
 python desktop_app.py
+# ou via navegador em http://127.0.0.1:5000:
+python web_app.py
 ```
-Uma janela nativa se abrirá. Escolha o par de moedas, selecione a estratégia desejada nos botões inferiores e acompanhe os logs em tempo real no terminal integrado.
 
-*(Você também pode utilizar `python web_app.py` caso prefira acessar a interface pelo navegador padrão em `http://localhost:5000`)*
-
-## 📦 Compilando para Executável (.exe)
-Se desejar gerar um arquivo `.exe` para rodar sem precisar abrir o terminal, basta executar o script de build:
+### Auditoria Quantitativa de Performance
 ```bash
-build_exe.bat
+python .agents/skills/post-trade-journal-auditor/scripts/audit_performance.py --csv trade_history.csv
 ```
-*(Certifique-se de ter o `pyinstaller` instalado: `pip install pyinstaller`)*
-
-## ⚠️ Aviso Legal (Disclaimer)
-
-**Este software é para fins educacionais e experimentais.**
-O uso de robôs de negociação, especialmente utilizando alta alavancagem (derivativos), envolve risco extremo de perda de capital (risco de liquidação). O autor não se responsabiliza por perdas financeiras resultantes do uso deste software. Gerencie seu risco de forma responsável.

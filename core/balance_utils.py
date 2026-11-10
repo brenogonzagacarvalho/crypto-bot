@@ -76,46 +76,51 @@ def enable_btc_collateral(exchange):
 
 def place_maker_entry(exchange, symbol, side, amount, price, tp_price, sl_price, max_wait=15):
     """
-    Coloca uma ordem Limit PostOnly (taxa maker 0.02%) com TP e SL embutidos.
+    Coloca uma ordem Limit PostOnly (taxa maker 0.02%) com TP e SL atômicos embutidos.
     
-    - PostOnly garante que a ordem vai para o livro como maker
+    - PostOnly garante que a ordem vai para o livro como maker (ancorada no best_bid/best_ask)
     - Se não preencher em max_wait segundos, cancela
     - Retorna (order, filled) - order é o dict, filled é True/False
-    
-    Args:
-        side: 'buy' ou 'sell'
-        price: preço limite (usar preço de mercado atual)
-        tp_price: take profit
-        sl_price: stop loss
-        max_wait: tempo máximo de espera em segundos
     """
     import time
-    
-    params = {
-        'timeInForce': 'PostOnly',
-        'takeProfit': str(tp_price),
-        'stopLoss': str(sl_price),
-    }
-    
+
     try:
         try:
-            # Formata amount e price para a precisão correta da exchange
             market = exchange.market(symbol)
-            min_amount = market['limits']['amount']['min']
-            
-            # Garante que o amount não seja menor que o mínimo antes de formatar
+            min_amount = float(market['limits']['amount']['min'] or 0)
             if amount < min_amount:
                 amount = min_amount
-                
+
+            # Ancora no melhor bid (compra) ou melhor ask (venda) para evitar rejeição imediata de PostOnly
+            try:
+                ob = exchange.fetch_order_book(symbol, limit=5)
+                if str(side).lower() in ('buy', 'long') and ob.get('bids'):
+                    best_bid = float(ob['bids'][0][0])
+                    price = min(float(price), best_bid)
+                elif str(side).lower() in ('sell', 'short') and ob.get('asks'):
+                    best_ask = float(ob['asks'][0][0])
+                    price = max(float(price), best_ask)
+            except Exception:
+                pass
+
             amount = float(exchange.amount_to_precision(symbol, amount))
-            price = float(exchange.price_to_precision(symbol, price))
-            
-            # Check secundário após amount_to_precision (que pode arredondar para baixo)
             if amount < min_amount:
                 amount = min_amount
-        except:
-            pass
-            
+            price = float(exchange.price_to_precision(symbol, price))
+            tp_str = str(exchange.price_to_precision(symbol, tp_price))
+            sl_str = str(exchange.price_to_precision(symbol, sl_price))
+        except Exception:
+            tp_str = str(tp_price)
+            sl_str = str(sl_price)
+
+        params = {
+            'timeInForce': 'PostOnly',
+            'takeProfit': tp_str,
+            'stopLoss': sl_str,
+            'tpTriggerBy': 'MarkPrice',
+            'slTriggerBy': 'MarkPrice',
+        }
+
         order = exchange.create_order(
             symbol=symbol,
             type='limit',

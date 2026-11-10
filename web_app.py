@@ -11,19 +11,17 @@ if sys.stderr.encoding and sys.stderr.encoding.lower() != 'utf-8':
 
 import threading
 from flask import Flask, render_template, jsonify, request
-from core.connection import get_exchange, check_connection
+from core.connection import get_exchange, check_connection, has_valid_credentials, ENV_PATH
 from core.shared_state import bot_state, add_log
 from core.balance_utils import get_unified_balance
 from strategies.live_predictor import run_live_predictor
 from strategies.sniper_leverage import run_sniper_leverage
-from strategies.martingale_sniper import run_martingale_sniper
-from strategies.trend_scalper import run_trend_scalper
-from strategies.reverse_martingale import run_reverse_martingale
 from strategies.reverse_martingale_pro import run_reverse_martingale_pro
-from strategies.scalping_10x import run_scalping_10x
 from strategies.survival_scalper import run_survival_scalper
 from strategies.chameleon_strategy import run_chameleon_strategy
 from strategies.fibonacci_retracement import run_fibonacci_strategy
+from strategies.claude_quant_alpha import run_claude_quant_alpha
+from strategies.grok_whale_flow import run_grok_whale_flow
 import time
 import logging
 from datetime import datetime
@@ -73,8 +71,13 @@ def bybit_transfer_direct(coin, amount, from_acc, to_acc):
 def init_exchange():
     """Inicializa a exchange e lê o saldo inicial."""
     global exchange
+    bot_state["api_configured"] = has_valid_credentials()
+    if not bot_state["api_configured"]:
+        add_log("⚠️ Aguardando configuração da BYBIT_API_KEY e BYBIT_API_SECRET no arquivo .env ou pelo painel.")
+        return False
+
     exchange = get_exchange()
-    if check_connection(exchange):
+    if exchange and check_connection(exchange):
         # Lê o saldo real logo que o servidor inicia
         try:
             # Usa V5 direto para pegar a Equidade Total (saldo real completo em USD)
@@ -88,8 +91,34 @@ def init_exchange():
                     bot_state["coin_balance"] = float(c.get('walletBalance') or 0)
                     bot_state["coin_name"] = "BTC"
             print(f"[OK] Saldo carregado: Total Equidade USD = ${bot_state['usdt_balance']:.2f}")
+            return True
         except Exception as e:
             print(f"[AVISO] Não foi possível carregar saldo inicial: {e}")
+    return False
+
+
+@app.route('/api/config/keys', methods=['POST'])
+def save_api_keys():
+    """Salva BYBIT_API_KEY e BYBIT_API_SECRET no arquivo .env e reconecta automaticamente."""
+    global exchange
+    data = request.get_json() or {}
+    api_key = (data.get('api_key') or '').strip()
+    api_secret = (data.get('api_secret') or '').strip()
+
+    if not api_key or not api_secret:
+        return jsonify({"error": "Informe a API Key e o API Secret da Bybit."}), 400
+
+    with open(ENV_PATH, 'w', encoding='utf-8') as f:
+        f.write(f"BYBIT_API_KEY={api_key}\nBYBIT_API_SECRET={api_secret}\n")
+
+    exchange = None
+    ok = init_exchange()
+    if ok:
+        add_log("✅ Chaves da API Bybit salvas e conectadas com sucesso!")
+        return jsonify({"status": "ok", "message": "Conectado à Bybit com sucesso!"})
+    else:
+        add_log("❌ Chaves salvas no .env, mas a Bybit recusou a autenticação. Verifique se a chave é válida.")
+        return jsonify({"error": "Chaves salvas, mas houve falha ao autenticar na Bybit. Verifique Key/Secret e permissões."}), 400
 
 @app.route('/')
 def index():
@@ -103,7 +132,8 @@ def status():
     import time
     now = time.time()
     
-    if now - last_balance_update > 10:
+    bot_state["api_configured"] = has_valid_credentials()
+    if now - last_balance_update > 10 and bot_state["api_configured"]:
         last_balance_update = now
         if not exchange:
             try:
@@ -206,8 +236,12 @@ def refresh_balance():
 def get_positions():
     """Busca todas as posições abertas na Bybit."""
     global exchange
+    if not has_valid_credentials():
+        return jsonify({"positions": [], "status": "unconfigured"})
     if not exchange:
         exchange = get_exchange()
+    if not exchange:
+        return jsonify({"positions": [], "status": "unconfigured"})
     try:
         # Busca posições linear (USDT Perpetuals)
         positions = exchange.fetch_positions(params={'category': 'linear', 'settleCoin': 'USDT'})
@@ -962,62 +996,61 @@ def start_bot():
     strategy = data.get('strategy', 'spot')
     symbol = data.get('symbol', 'BTC/USDT:USDT')
     
-    estrategias_multi = ['survival', 'reverse_martingale', 'scalping_10x', 'sniper', 'chameleon', 'fibonacci', 'daily_range', 'ema_rsi', 'vwap_deviation', 'candlestick_rsi']
+    estrategias_multi = [
+        'claude_alpha', 'grok_flow', 'survival', 'reverse_martingale', 'sniper',
+        'chameleon', 'fibonacci', 'daily_range', 'ema_rsi', 'vwap_deviation', 'candlestick_rsi'
+    ]
     if symbol == 'MULTI' and strategy not in estrategias_multi:
         add_log(f"⚠️ A estratégia '{strategy}' não suporta MULTI. Usando BTC por padrão.")
         symbol = 'BTC/USDT:USDT'
     
-    if strategy == 'candlestick_rsi':
+    if strategy == 'claude_alpha':
+        if symbol != 'MULTI' and ':' not in symbol:
+            symbol = symbol.split('/')[0] + '/USDT:USDT'
+        add_log(f"Comando de INICIAR CLAUDE QUANT ALPHA recebido para {symbol}...")
+        thread = threading.Thread(target=run_claude_quant_alpha, args=(exchange, symbol))
+    elif strategy == 'grok_flow':
+        if symbol != 'MULTI' and ':' not in symbol:
+            symbol = symbol.split('/')[0] + '/USDT:USDT'
+        add_log(f"Comando de INICIAR GROK WHALE FLOW recebido para {symbol}...")
+        thread = threading.Thread(target=run_grok_whale_flow, args=(exchange, symbol))
+    elif strategy == 'candlestick_rsi':
         from strategies.candlestick_rsi_scalper import run_candlestick_rsi_strategy
         if symbol != 'MULTI' and ':' not in symbol:
             symbol = symbol.split('/')[0] + '/USDT:USDT'
         add_log(f"Comando de INICIAR CANDLESTICK + RSI SCALPER recebido para {symbol}...")
         thread = threading.Thread(target=run_candlestick_rsi_strategy, args=(exchange, symbol))
     elif strategy == 'sniper':
+        if symbol != 'MULTI' and ':' not in symbol:
+            symbol = symbol.split('/')[0] + '/USDT:USDT'
         add_log(f"Comando de INICIAR SNIPER recebido para {symbol}...")
         thread = threading.Thread(target=run_sniper_leverage, args=(exchange, symbol))
-    elif strategy == 'martingale':
-        add_log(f"Comando de INICIAR MARTINGALE recebido para {symbol}...")
-        thread = threading.Thread(target=run_martingale_sniper, args=(exchange, symbol))
-    elif strategy == 'trend':
-        add_log(f"Comando de INICIAR TREND SCALPER recebido para {symbol}...")
-        thread = threading.Thread(target=run_trend_scalper, args=(exchange, symbol))
     elif strategy == 'reverse_martingale':
+        if symbol != 'MULTI' and ':' not in symbol:
+            symbol = symbol.split('/')[0] + '/USDT:USDT'
         add_log(f"Comando de INICIAR REVERSE MARTINGALE PRO recebido para {symbol}...")
         thread = threading.Thread(target=run_reverse_martingale_pro, args=(exchange, symbol))
-    elif strategy == 'scalping_10x':
-        add_log(f"Comando de INICIAR SCALPING 10X recebido para {symbol}...")
-        thread = threading.Thread(target=run_scalping_10x, args=(exchange, symbol))
     elif strategy == 'survival':
+        if symbol != 'MULTI' and ':' not in symbol:
+            symbol = symbol.split('/')[0] + '/USDT:USDT'
         add_log(f"Comando de INICIAR SURVIVAL SCALPER recebido para {symbol}...")
         thread = threading.Thread(target=run_survival_scalper, args=(exchange, symbol))
-    elif strategy == 'longshort':
-        from strategies.hybrid_long_short import run_hybrid_long_short
-        add_log(f"Comando de INICIAR LONG/SHORT HÍBRIDO recebido para {symbol}...")
-        thread = threading.Thread(target=run_hybrid_long_short, args=(exchange, symbol))
     elif strategy == 'longshort_lev':
         from strategies.hybrid_long_short_leverage import run_leveraged_long_short
         add_log(f"Comando de INICIAR LONG/SHORT ALAVANCADO recebido para {symbol}...")
         thread = threading.Thread(target=run_leveraged_long_short, args=(exchange, symbol))
-    elif strategy == 'double7':
-        from strategies.double_in_7_days import run_double_7
-        add_log(f"Comando de INICIAR DOBRAR EM 7 DIAS recebido para {symbol}...")
-        thread = threading.Thread(target=run_double_7, args=(exchange, symbol))
     elif strategy == 'chameleon':
-        # Garante formato linear perpetual (ex: ETH/USDT -> ETH/USDT:USDT)
         if symbol != 'MULTI' and ':' not in symbol:
             symbol = symbol.split('/')[0] + '/USDT:USDT'
         add_log(f"Comando de INICIAR CAMALEÃO recebido para {symbol}...")
         thread = threading.Thread(target=run_chameleon_strategy, args=(exchange, symbol))
     elif strategy == 'fibonacci':
-        # Garante formato linear perpetual (ex: ETH/USDT -> ETH/USDT:USDT)
         if symbol != 'MULTI' and ':' not in symbol:
             symbol = symbol.split('/')[0] + '/USDT:USDT'
         add_log(f"Comando de INICIAR FIBONACCI recebido para {symbol}...")
         thread = threading.Thread(target=run_fibonacci_strategy, args=(exchange, symbol))
     elif strategy == 'daily_range':
         from strategies.daily_range_scalper import run_daily_range_strategy
-        # Garante formato linear perpetual (ex: ETH/USDT -> ETH/USDT:USDT)
         if symbol != 'MULTI' and ':' not in symbol:
             symbol = symbol.split('/')[0] + '/USDT:USDT'
         add_log(f"Comando de INICIAR MÍNIMA/MÁXIMA DIÁRIA recebido para {symbol}...")

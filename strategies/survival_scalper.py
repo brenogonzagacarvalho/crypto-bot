@@ -1,3 +1,12 @@
+"""
+strategies/survival_scalper.py — ⚔️ SURVIVAL SCALPER PRO (Micro-Account Compounder)
+
+Refatorada com as Skills Quantitativas (Claude & Grok Trading Desk):
+- Otimizada para bancas pequenas ($3 a $100) com filtro inteligente de lote mínimo (`RiskOfficerSkill`).
+- Combina sinais de Tendência (HTF + VWAP + EMA200) e Contra-Tendência Extrema (RSI + Pavio de Rejeição + OBI).
+- Defesa ativa agressiva: ativa Breakeven rápido em +1R e Trailing Stop Server-Side para proteger cada centavo.
+"""
+
 import time
 import sys
 import os
@@ -6,26 +15,38 @@ import json
 from datetime import datetime
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from core.market_data import fetch_ohlcv_data, calculate_rsi, calculate_ema, calculate_macd, calculate_vwap, calculate_atr
 from core.shared_state import bot_state, add_log
-from core.balance_utils import get_unified_balance, get_available_margin_usd, enable_btc_collateral, place_maker_entry, get_closed_pnl
+from core.balance_utils import (
+    get_unified_balance,
+    get_available_margin_usd,
+    enable_btc_collateral,
+    get_closed_pnl_details,
+)
+from core.quant_skills import (
+    DEFAULT_SCAN_SYMBOLS,
+    MarketRegimeSkill,
+    MicrostructureSkill,
+    RiskOfficerSkill,
+    ExecutionProtocolSkill,
+)
 
 LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'logs')
 LOG_FILE = os.path.join(LOG_DIR, 'survival_trades.csv')
-MARKET_LOG_FILE = os.path.join(LOG_DIR, 'survival_market_data.csv')
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config', 'risk_params.json')
+
 
 def load_config():
     try:
-        with open(CONFIG_FILE, 'r') as f:
+        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
             return json.load(f).get('survival_scalper', {})
-    except Exception as e:
-        add_log(f"Aviso: Não foi possível carregar config: {e}. Usando defaults.")
+    except Exception:
         return {
-            "max_leverage": 20, "risk_per_trade": 0.20, "max_daily_loss_pct": 0.30,
-            "min_balance": 3.0, "take_profit_pct": 1.5, "stop_loss_pct": 0.5,
-            "cooldown_seconds": 30, "min_winrate_to_continue": 40
+            "max_leverage": 20,
+            "risk_per_trade": 0.18,
+            "max_daily_loss_pct": 0.15,
+            "min_balance": 2.0,
         }
+
 
 def init_trade_log():
     os.makedirs(LOG_DIR, exist_ok=True)
@@ -38,12 +59,6 @@ def init_trade_log():
                 'Saldo USD', 'Status', 'Detalhes'
             ])
 
-def init_market_log():
-    os.makedirs(LOG_DIR, exist_ok=True)
-    if not os.path.exists(MARKET_LOG_FILE):
-        with open(MARKET_LOG_FILE, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            writer.writerow(['Data/Hora', 'Moeda', 'Preço', 'RSI', 'EMA200', 'MACD', 'Tendência'])
 
 def log_trade(symbol, tipo, direcao, preco, rsi, valor, leverage, tp, sl, saldo, status, detalhes=''):
     try:
@@ -51,312 +66,244 @@ def log_trade(symbol, tipo, direcao, preco, rsi, valor, leverage, tp, sl, saldo,
             writer = csv.writer(f)
             writer.writerow([
                 datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                symbol, tipo, direcao, f'{preco:.2f}',
-                f'{rsi:.1f}' if rsi else '-', f'{detalhes.get("ema200", "-")}' if isinstance(detalhes, dict) else '-', 
-                f'{detalhes.get("macd", "-")}' if isinstance(detalhes, dict) else '-',
-                f'{valor:.2f}', f'{leverage}x',
-                f'{tp:.2f}' if tp else '-', f'{sl:.2f}' if sl else '-',
-                f'{saldo:.2f}', status, detalhes.get("msg", "") if isinstance(detalhes, dict) else detalhes
+                symbol, tipo, direcao, f'{preco:.4f}' if preco else '-',
+                f'{rsi:.1f}' if rsi else '-', '-', '-',
+                f'{valor:.2f}' if valor else '0', f'{leverage}x',
+                f'{tp:.4f}' if tp else '-', f'{sl:.4f}' if sl else '-',
+                f'{saldo:.2f}' if saldo is not None else '-', status, str(detalhes)
             ])
     except Exception as e:
         add_log(f"Aviso log CSV: {e}")
 
-def log_market_data(symbol, price, rsi, ema200, macd, trend):
-    try:
-        with open(MARKET_LOG_FILE, 'a', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            writer.writerow([
-                datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                symbol, f'{price:.6f}', f'{rsi:.2f}', f'{ema200:.6f}', f'{macd:.6f}', trend
-            ])
-    except Exception:
-        pass
-
-def get_collateral_usd(exchange):
-    available, _ = get_available_margin_usd(exchange)
-    if available is None:
-        return None, 'ERROR', None
-        
-    if available > 0.01:
-        btc_bal = get_unified_balance(exchange, 'BTC')
-        if btc_bal > 0.0: return available, 'BTC', btc_bal
-        return available, 'USDT', available
-    return 0.0, 'NONE', 0.0
 
 def run_survival_scalper(exchange, symbol='MULTI'):
     is_multi = (symbol == "MULTI")
-    # Expansão para 7 moedas principais
-    symbols_to_scan = ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT", "XRP/USDT:USDT", "ADA/USDT:USDT", "DOGE/USDT:USDT", "BNB/USDT:USDT"] if is_multi else [symbol]
-    
+    # Ordena pares de lote mínimo baixo primeiro para maximizar compatibilidade com bancas pequenas
+    low_lot_priority = [
+        "XRP/USDT:USDT",
+        "DOGE/USDT:USDT",
+        "ADA/USDT:USDT",
+        "SOL/USDT:USDT",
+        "ETH/USDT:USDT",
+        "BNB/USDT:USDT",
+        "BTC/USDT:USDT",
+    ]
+    symbols_to_scan = low_lot_priority if is_multi else [
+        symbol if ':' in symbol else f"{symbol.split('/')[0]}/USDT:USDT"
+    ]
+
     init_trade_log()
-    init_market_log()
-    
     config = load_config()
-    leverage = config['max_leverage']
-    
-    add_log(f"🛡️ [SURVIVAL SCALPER] Iniciado em {'MULTI' if is_multi else symbol} com {leverage}x")
+    leverage = int(config.get('max_leverage', 20))
+    risk_pct = float(config.get('risk_per_trade', 0.18))
+    min_balance = float(config.get('min_balance', 2.0))
+
+    add_log(f"{'=' * 58}")
+    add_log(f"⚔️ [SURVIVAL SCALPER PRO] Iniciado em {'MULTI' if is_multi else symbols_to_scan[0]} ({leverage}x)")
+    add_log(f"🛡️ Skills: Smart Min-Lot Filter + MTF Confluence + Breakeven +1R")
+    add_log(f"{'=' * 58}")
+
     bot_state["is_running"] = True
-    bot_state["status"] = f"🛡️ Survival ({leverage}x)"
-    
+    bot_state["status"] = f"⚔️ Survival ({leverage}x)"
+
     enable_btc_collateral(exchange)
-    
-    collateral_usd, collateral_coin, _ = get_collateral_usd(exchange)
-    
-    if collateral_usd is None:
-        add_log("❌ Falha crítica ao ler o saldo inicial. Verifique sua chave de API (restrição de IP).")
+    for sym in symbols_to_scan:
+        ExecutionProtocolSkill.setup_symbol_derivatives(exchange, sym, leverage, margin_mode='cross')
+
+    collateral_usd, total_equity = get_available_margin_usd(exchange)
+    if collateral_usd is None or total_equity is None:
+        add_log("❌ Falha crítica ao ler o saldo inicial na Bybit UTA.")
         bot_state["is_running"] = False
         bot_state["status"] = "🔴 Erro API"
         return
-        
-    bot_state["usdt_balance"] = collateral_usd
-    starting_balance = collateral_usd
-    
-    # Validação de banca mínima
-    if collateral_usd < config['min_balance']:
-        add_log(f"❌ BANCA INSUFICIENTE! Mínimo ${config['min_balance']:.2f}, Atual: ${collateral_usd:.2f}")
+
+    bot_state["usdt_balance"] = total_equity
+    starting_equity = total_equity
+
+    if total_equity < min_balance:
+        add_log(f"❌ BANCA INSUFICIENTE! Mínimo ${min_balance:.2f}, Atual: ${total_equity:.2f}")
         bot_state["is_running"] = False
         return
 
-    add_log(f"💰 Margem Inicial: ${collateral_usd:.2f} ({collateral_coin})")
-    
-    for sym in symbols_to_scan:
-        try: exchange.set_leverage(leverage, sym)
-        except: pass
-
     active_positions = {}
-    MAX_POSITIONS = 3
-    check_interval = 5
+    MAX_POSITIONS = 2
+    check_interval = 6
     scan_count = 0
-    rsi_history = {}
-    last_trade_time = 0
-    
-    daily_loss_limit = starting_balance * (1 - config['max_daily_loss_pct'])
-    
+    max_loss_pct = min(0.15, float(config.get('max_daily_loss_pct', 0.15)))
+
     try:
         while bot_state["is_running"]:
             scan_count += 1
-            
-            try:
-                collateral_usd, collateral_coin, _ = get_collateral_usd(exchange)
-                if collateral_usd is None:
-                    add_log("⚠️ Erro ao obter saldo da API (Bybit). Aguardando...")
-                    time.sleep(5)
-                    continue
-                bot_state["usdt_balance"] = collateral_usd
-            except Exception as e:
-                add_log(f"⚠️ Erro ao ler banca: {e}")
-                time.sleep(2)
+            collateral_usd, total_equity = get_available_margin_usd(exchange)
+            if collateral_usd is None or total_equity is None:
+                time.sleep(5)
                 continue
-                
-            risk_pct = config.get('risk_per_trade', 0.20)
-            trade_amount = max(1.0, collateral_usd * risk_pct)
-            
-            if len(active_positions) < MAX_POSITIONS and trade_amount < 0.10:
-                add_log(f"⚠️ Mão muito pequena (${trade_amount:.2f}). Aguardando...")
-                for _ in range(check_interval):
-                    if not bot_state["is_running"]: break
-                    time.sleep(1)
-                continue
+            bot_state["usdt_balance"] = total_equity
 
-            # --- MONITORAMENTO DE POSIÇÕES ABERTAS ---
+            if total_equity <= starting_equity * (1.0 - max_loss_pct):
+                add_log(f"🛑 [RISK OFFICER] Stop Diário de Sobrevivência atingido (${total_equity:.2f}).")
+                break
+
+            # 1. Monitoramento e Defesa Ativa de Posições
             try:
                 all_positions = []
                 for sym in symbols_to_scan:
                     try:
                         all_positions.extend(exchange.fetch_positions([sym]))
-                    except: pass
+                    except Exception:
+                        pass
                 current_open_symbols = set()
-                
+
                 for pos in all_positions:
                     contracts = float(pos.get('contracts') or 0)
                     if contracts > 0:
                         sym = pos['symbol']
                         current_open_symbols.add(sym)
-                        
                         entry_p = float(pos.get('entryPrice') or 0)
+                        side = str(pos.get('side', 'LONG')).upper()
+                        unpnl = float(pos.get('unrealizedPnl') or 0)
+                        roi = float(pos.get('percentage') or 0)
+
                         if sym not in active_positions:
-                            active_positions[sym] = {'side': pos['side'].upper(), 'entry_price': entry_p}
-                            log_trade(sym, 'ENTRADA', pos['side'].upper(), entry_p, 0, trade_amount, leverage, 0, 0, collateral_usd, '✅ Detectada')
-                            
-                        unrealized_pnl = float(pos.get('unrealizedPnl') or 0)
-                        liq_price = pos.get('liquidationPrice')
-                        roi = pos.get('percentage')
-                        margin = pos.get('initialMargin')
-                        
-                        liq_str = f" | Liq: ${float(liq_price or 0):,.2f}" if liq_price else ""
-                        roi_str = f" | ROI: {float(roi or 0):+.2f}%" if roi is not None else ""
-                        marg_str = f" | Margem: ${float(margin or 0):.2f}" if margin else ""
-                        
-                        add_log(f"📊 {sym} {pos['side'].upper()} Aberto:")
-                        add_log(f"  💰 Qtd: {contracts}{marg_str}{liq_str}")
-                        add_log(f"  💵 PnL: ${unrealized_pnl:+.4f}{roi_str}")
-                
-                # Checa fechamentos
+                            active_positions[sym] = {
+                                'side': side,
+                                'entry_price': entry_p,
+                                'sl_dist': entry_p * 0.005,
+                                'current_sl': 0.0,
+                                'breakeven_locked': False,
+                            }
+
+                        RiskOfficerSkill.manage_open_position(exchange, sym, pos, active_positions[sym])
+                        bot_state["unrealized_pnl"] = unpnl
+                        add_log(f"⚔️ {sym.split('/')[0]} {side} | PnL: ${unpnl:+.4f} ({roi:+.2f}%) | SL: ${active_positions[sym].get('current_sl', 0):.4f}")
+
                 closed_symbols = list(set(active_positions.keys()) - current_open_symbols)
                 for sym in closed_symbols:
-                    new_collateral_usd, _, _ = get_collateral_usd(exchange)
-                    # Aguarda a Bybit registrar o PnL no endpoint closed-pnl (leva 2-4s)
-                    time.sleep(3)
-                    resultado = get_closed_pnl(exchange, sym, limit=1)
+                    time.sleep(2.5)
+                    details = get_closed_pnl_details(exchange, sym)
+                    resultado = details['pnl']
+                    close_price = details['exit_price'] or active_positions[sym]['entry_price']
                     resultado_emoji = "🏆 LUCRO" if resultado > 0 else "💀 LOSS"
-                    
-                    add_log(f"{'='*50}")
-                    add_log(f"{resultado_emoji}: Fechamento em {sym} | ${resultado:+.4f}")
-                    add_log(f"{'='*50}")
-                    
-                    try:
-                        ticker = exchange.fetch_ticker(sym)
-                        close_price = float(ticker['last'])
-                    except:
-                        close_price = active_positions[sym]['entry_price']
-                        
-                    resultado_str = f"{'+$' if resultado >= 0 else '-$'}{abs(resultado):.4f}"
-                    
-                    log_trade(sym, 'SAÍDA', active_positions[sym]['side'], close_price, 0, trade_amount, leverage, 0, 0, new_collateral_usd, resultado_emoji, resultado_str)
+                    add_log(f"{resultado_emoji}: Fechamento Survival em {sym} | ${resultado:+.4f}")
+                    log_trade(
+                        sym, 'SAÍDA', active_positions[sym]['side'], close_price,
+                        0, 0, leverage, 0, 0, total_equity, resultado_emoji, f"{resultado:+.4f}"
+                    )
                     del active_positions[sym]
-                    collateral_usd = new_collateral_usd
             except Exception as e:
                 add_log(f"⚠️ Erro ao monitorar posições: {e}")
 
-            # --- BUSCA POR NOVAS ENTRADAS ---
+            # 2. Scanner Survival Pro
             if len(active_positions) < MAX_POSITIONS:
-                add_log(f"── Scanner #{scan_count} | Abertas {len(active_positions)}/{MAX_POSITIONS} | Mão: ${trade_amount:.2f} ──")
-                
+                add_log(f"── Survival Scanner #{scan_count} | Abertas {len(active_positions)}/{MAX_POSITIONS} | Margem: ${collateral_usd:.2f} ──")
+
                 for sym in symbols_to_scan:
-                    if not bot_state["is_running"] or len(active_positions) >= MAX_POSITIONS: break
-                    if sym in active_positions: continue
-                    
+                    if not bot_state["is_running"] or len(active_positions) >= MAX_POSITIONS:
+                        break
+                    if sym in active_positions:
+                        continue
+
                     coin_name = sym.split('/')[0]
                     bot_state["coin_name"] = coin_name
-                    
-                    ohlcv = fetch_ohlcv_data(exchange, sym, timeframe='5m', limit=210)
-                    if not ohlcv: continue
-                    
-                    closes = ohlcv['c']
-                    current_price = closes[-1]
-                    rsi = calculate_rsi(closes, period=14)
-                    ema200 = calculate_ema(closes, period=200)
-                    macd, signal, hist = calculate_macd(closes)
-                    vwap = calculate_vwap(ohlcv)
-                    atr = calculate_atr(ohlcv, period=14)
-                    
-                    if rsi is None or ema200 is None or hist is None or vwap is None or atr is None: continue
-                    
-                    # 1. Macro Filtro de Tendência HTF (1 Hora EMA 50)
-                    htf_trend = "NEUTRAL"
-                    try:
-                        ohlcv_1h = fetch_ohlcv_data(exchange, sym, timeframe='1h', limit=210)
-                        if ohlcv_1h:
-                            closes_1h = ohlcv_1h['c']
-                            ema50_1h = calculate_ema(closes_1h, period=50)
-                            if ema50_1h is not None:
-                                htf_trend = "UPTREND" if current_price > ema50_1h else "DOWNTREND"
-                    except Exception as e:
-                        pass
 
-                    # 2. Filtro de Risco e Lote Mínimo para evitar sobre-exposição de banca
-                    try:
-                        market = exchange.market(sym)
-                        min_amount = market['limits']['amount']['min']
-                        min_val_usd = min_amount * current_price
-                        target_val_usd = trade_amount * leverage
-                        
-                        if min_val_usd > target_val_usd * 1.3:
-                            if scan_count % 10 == 1:
-                                add_log(f"⚠️ {coin_name} ignorada: lote mínimo (${min_val_usd:.2f}) excede risco (${target_val_usd:.2f}).")
-                            continue
-                    except Exception as e:
-                        pass
-                    
-                    # Ler anatomia do último candle de 5m fechado para exaustão
-                    o_prev = ohlcv['o'][-2]
-                    h_prev = ohlcv['h'][-2]
-                    l_prev = ohlcv['l'][-2]
-                    c_prev = ohlcv['c'][-2]
-                    body = max(0.0001, abs(c_prev - o_prev))
-                    lower_wick = min(o_prev, c_prev) - l_prev
-                    upper_wick = h_prev - max(o_prev, c_prev)
+                    analysis = MarketRegimeSkill.analyze_asset(exchange, sym, ltf='5m', htf='1h')
+                    if not analysis or analysis['regime'] == 'HIGH_VOL_CHOP':
+                        continue
 
-                    bot_state["current_price"] = current_price
+                    price = analysis['current_price']
+                    rsi = analysis['rsi']
+                    prev_rsi = analysis['prev_rsi']
+                    ema200 = analysis['ema200']
+                    vwap = analysis['vwap']
+                    atr = analysis['atr']
+                    htf_trend = analysis['htf_trend']
+                    candle = analysis['candle']
+
+                    bot_state["current_price"] = price
                     bot_state["rsi"] = rsi
-                    trend = f"ALTA 📈 (HTF: {htf_trend})" if current_price > ema200 else f"BAIXA 📉 (HTF: {htf_trend})"
-                    
-                    prev_rsi = rsi_history.get(sym, rsi)
-                    rsi_history[sym] = rsi
-                    
-                    # Loga os dados analisados para o Live Terminal
-                    wick_ratio = (lower_wick / body) if current_price > ema200 else (upper_wick / body)
-                    add_log(f"  {coin_name}: Preço: ${current_price:,.4f} | RSI: {rsi:.1f} (Ant: {prev_rsi:.1f}) | EMA200: ${ema200:,.4f} | VWAP: ${vwap:,.4f} | Pavio: {wick_ratio:.1f}x | Trend: {trend}")
+                    bot_state["rsi_status"] = f"HTF: {htf_trend} | RSI: {rsi:.1f}"
 
-                    # Stop Loss dinâmico por ATR (min 0.5%, max 1.5% do preço de entrada)
-                    dist = 2 * atr
-                    dist = max(current_price * 0.005, min(current_price * 0.015, dist))
+                    add_log(f"  {coin_name}: ${price:,.4f} | RSI: {rsi:.1f} (Ant: {prev_rsi:.1f}) | HTF: {htf_trend}")
 
-                    # Verificação dos gatilhos
-                    trigger_buy = False
-                    trigger_sell = False
-                    signal_type = "TENDÊNCIA"
+                    trigger_side = None
+                    signal_type = None
 
-                    # GATILHO LONG:
-                    if rsi <= 25 and rsi > prev_rsi:
-                        # 1. Contra-tendência (Extrema Sobrevenda + Rejeição moderada)
-                        if lower_wick > body * 1.0:
-                            trigger_buy = True
-                            signal_type = "CONTRA-TENDÊNCIA"
-                    elif rsi <= 45 and rsi > prev_rsi:
-                        # 2. Seguindo a Tendência (Filtros VWAP, Tendência HTF e Médias, SEM restrição de pavio)
-                        if htf_trend == "UPTREND" and current_price > ema200 and current_price > vwap:
-                            trigger_buy = True
-                            signal_type = "TENDÊNCIA"
+                    # Gatilho LONG: Exaustão de Sobrevenda ou Pullback na Tendência de Alta
+                    if rsi <= 28 and rsi > prev_rsi and candle and candle['lower_wick_ratio'] >= 1.0:
+                        trigger_side = 'buy'
+                        signal_type = 'REVERSÃO_EXTREMA'
+                    elif 35 <= rsi <= 46 and rsi > prev_rsi and htf_trend == 'UPTREND' and price > ema200 and price > vwap:
+                        trigger_side = 'buy'
+                        signal_type = 'TENDÊNCIA_HTF'
 
-                    # GATILHO SHORT:
-                    if rsi >= 75 and rsi < prev_rsi:
-                        # 1. Contra-tendência (Extrema Sobrecompra + Rejeição moderada)
-                        if upper_wick > body * 1.0:
-                            trigger_sell = True
-                            signal_type = "CONTRA-TENDÊNCIA"
-                    elif rsi >= 55 and rsi < prev_rsi:
-                        # 2. Seguindo a Tendência (Filtros VWAP, Tendência HTF e Médias, SEM restrição de pavio)
-                        if htf_trend == "DOWNTREND" and current_price < ema200 and current_price < vwap:
-                            trigger_sell = True
-                            signal_type = "TENDÊNCIA"
+                    # Gatilho SHORT: Exaustão de Sobrecompra ou Pullback na Tendência de Baixa
+                    elif rsi >= 72 and rsi < prev_rsi and candle and candle['upper_wick_ratio'] >= 1.0:
+                        trigger_side = 'sell'
+                        signal_type = 'REVERSÃO_EXTREMA'
+                    elif 54 <= rsi <= 65 and rsi < prev_rsi and htf_trend == 'DOWNTREND' and price < ema200 and price < vwap:
+                        trigger_side = 'sell'
+                        signal_type = 'TENDÊNCIA_HTF'
 
-                    # EXECUÇÃO DE ORDENS
-                    if trigger_buy:
-                        add_log(f"🛡️ SINAL LONG DE SOBREVIVÊNCIA ({signal_type}) em {coin_name}!")
-                        amount_to_buy = (trade_amount * leverage) / current_price
-                        sl_raw = current_price - dist
-                        tp_raw = current_price + 3 * dist # Mantém 3:1 dinâmico
-                        tp_price = float(exchange.price_to_precision(sym, tp_raw))
-                        sl_price = float(exchange.price_to_precision(sym, sl_raw))
-                        
-                        try:
-                            order, filled = place_maker_entry(exchange, sym, 'buy', amount_to_buy, current_price, tp_price, sl_price)
-                            if filled:
-                                active_positions[sym] = {'side': 'LONG', 'entry_price': current_price}
-                                log_trade(sym, 'ENTRADA', 'LONG', current_price, rsi, trade_amount, leverage, tp_price, sl_price, collateral_usd, f'✅ SUCESSO ({signal_type})')
-                        except Exception as e: add_log(f"❌ Erro: {e}")
+                    if not trigger_side:
+                        time.sleep(0.3)
+                        continue
 
-                    elif trigger_sell:
-                        add_log(f"🛡️ SINAL SHORT DE SOBREVIVÊNCIA ({signal_type}) em {coin_name}!")
-                        amount_to_sell = (trade_amount * leverage) / current_price
-                        sl_raw = current_price + dist
-                        tp_raw = current_price - 3 * dist # Mantém 3:1 dinâmico
-                        tp_price = float(exchange.price_to_precision(sym, tp_raw))
-                        sl_price = float(exchange.price_to_precision(sym, sl_raw))
-                        
-                        try:
-                            order, filled = place_maker_entry(exchange, sym, 'sell', amount_to_sell, current_price, tp_price, sl_price)
-                            if filled:
-                                active_positions[sym] = {'side': 'SHORT', 'entry_price': current_price}
-                                log_trade(sym, 'ENTRADA', 'SHORT', current_price, rsi, trade_amount, leverage, tp_price, sl_price, collateral_usd, f'✅ SUCESSO ({signal_type})')
-                        except Exception as e: add_log(f"❌ Erro: {e}")
-                        
-                    time.sleep(0.5)
-            
+                    ob = MicrostructureSkill.get_orderbook_imbalance(exchange, sym)
+                    if trigger_side == 'buy' and ob['obi'] < -0.20:
+                        continue
+                    if trigger_side == 'sell' and ob['obi'] > 0.20:
+                        continue
+
+                    sizing = RiskOfficerSkill.calculate_order_sizing(
+                        exchange=exchange,
+                        symbol=sym,
+                        side=trigger_side,
+                        entry_price=price,
+                        atr=atr,
+                        collateral_usd=collateral_usd,
+                        leverage=leverage,
+                        risk_margin_pct=risk_pct,
+                        atr_sl_mult=1.9,
+                        rr_ratio=2.6,
+                    )
+
+                    if not sizing['valid']:
+                        continue
+
+                    dir_label = 'LONG' if trigger_side == 'buy' else 'SHORT'
+                    add_log(f"⚔️ SINAL SURVIVAL {dir_label} ({signal_type}) em {coin_name} @ ${sizing['entry_price']:.4f}!")
+
+                    _, filled = ExecutionProtocolSkill.execute_smart_order(
+                        exchange, sym, trigger_side, sizing['amount'],
+                        sizing['entry_price'], sizing['tp_price'], sizing['sl_price'],
+                        allow_market_fallback=True
+                    )
+                    if filled:
+                        active_positions[sym] = {
+                            'side': dir_label,
+                            'entry_price': sizing['entry_price'],
+                            'sl_price': sizing['sl_price'],
+                            'current_sl': sizing['sl_price'],
+                            'sl_dist': sizing['sl_dist'],
+                            'breakeven_locked': False,
+                        }
+                        log_trade(
+                            sym, 'ENTRADA', dir_label, sizing['entry_price'],
+                            rsi, sizing['margin_usd'], leverage,
+                            sizing['tp_price'], sizing['sl_price'], total_equity,
+                            f'✅ EXECUTADA ({signal_type})', f'OBI: {ob["obi"]:+.2f}'
+                        )
+
+                    time.sleep(0.4)
+
             for _ in range(check_interval):
-                if not bot_state["is_running"]: break
+                if not bot_state["is_running"]:
+                    break
                 time.sleep(1)
+
     except Exception as e:
-        add_log(f"⚠️ Erro crítico no loop principal: {e}")
-        time.sleep(5)
+        add_log(f"⚠️ Erro crítico no Survival Scalper: {e}")
+    finally:
+        bot_state["is_running"] = False
+        bot_state["status"] = "🔴 Desligado"
+        add_log("⚔️ Survival Scalper Finalizado.")
