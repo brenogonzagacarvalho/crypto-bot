@@ -1,5 +1,6 @@
 # Variáveis de ambiente e credenciais
 .env
+config/paper_account.json
 
 # Logs do sistema
 logs/

@@ -71,16 +71,16 @@ def bybit_transfer_direct(coin, amount, from_acc, to_acc):
 def init_exchange():
     """Inicializa a exchange e lê o saldo inicial."""
     global exchange
-    bot_state["api_configured"] = has_valid_credentials()
+    mode = bot_state.get("account_mode", "LIVE").upper()
+    bot_state["api_configured"] = has_valid_credentials() or (mode == "PAPER")
     if not bot_state["api_configured"]:
-        add_log("⚠️ Aguardando configuração da BYBIT_API_KEY e BYBIT_API_SECRET no arquivo .env ou pelo painel.")
+        add_log("⚠️ Aguardando configuração da BYBIT_API_KEY e BYBIT_API_SECRET no arquivo .env ou pelo painel (ou mude para Conta de Teste).")
         return False
 
-    exchange = get_exchange()
+    exchange = get_exchange(mode=mode)
     if exchange and check_connection(exchange):
-        # Lê o saldo real logo que o servidor inicia
+        # Lê o saldo real ou simulado logo que o servidor inicia
         try:
-            # Usa V5 direto para pegar a Equidade Total (saldo real completo em USD)
             resp = exchange.privateGetV5AccountWalletBalance({'accountType': 'UNIFIED'})
             account_data = resp.get('result', {}).get('list', [{}])[0]
             bot_state["usdt_balance"] = float(account_data.get('totalEquity', 0))
@@ -90,11 +90,79 @@ def init_exchange():
                 if c.get('coin') == 'BTC':
                     bot_state["coin_balance"] = float(c.get('walletBalance') or 0)
                     bot_state["coin_name"] = "BTC"
-            print(f"[OK] Saldo carregado: Total Equidade USD = ${bot_state['usdt_balance']:.2f}")
+            print(f"[OK] Saldo carregado ({mode}): Total Equidade USD = ${bot_state['usdt_balance']:.2f}")
             return True
         except Exception as e:
             print(f"[AVISO] Não foi possível carregar saldo inicial: {e}")
     return False
+
+
+@app.route('/api/account_mode', methods=['POST'])
+def switch_account_mode():
+    """Alterna entre Conta Normal (LIVE) e Conta de Teste (PAPER) com cotações reais da Bybit."""
+    global exchange, last_balance_update
+    data = request.get_json() or {}
+    current_mode = bot_state.get("account_mode", "LIVE").upper()
+    requested_mode = (data.get('mode') or ('PAPER' if current_mode == 'LIVE' else 'LIVE')).upper()
+    if requested_mode not in ('LIVE', 'PAPER'):
+        return jsonify({"error": "Modo inválido. Use LIVE ou PAPER."}), 400
+
+    # Se o robô estiver rodando, para com segurança antes de trocar a conta
+    if bot_state.get("is_running"):
+        bot_state["is_running"] = False
+        add_log("⏹ Robô pausado automaticamente para troca de conta.")
+        time.sleep(0.5)
+
+    bot_state["account_mode"] = requested_mode
+    exchange = get_exchange(mode=requested_mode)
+    last_balance_update = 0
+
+    if exchange:
+        try:
+            resp = exchange.privateGetV5AccountWalletBalance({'accountType': 'UNIFIED'})
+            account_data = resp.get('result', {}).get('list', [{}])[0]
+            bot_state["usdt_balance"] = float(account_data.get('totalEquity', 0))
+            pos_resp = exchange.fetch_positions()
+            bot_state["open_positions_count"] = sum(1 for p in pos_resp if float(p.get('contracts') or 0) > 0)
+            bot_state["unrealized_pnl"] = sum(float(p.get('unrealizedPnl') or 0) for p in pos_resp if float(p.get('contracts') or 0) > 0)
+        except Exception:
+            pass
+
+    label = "🧪 CONTA DE TESTE (Simulador Real-Time Bybit)" if requested_mode == "PAPER" else "🟢 CONTA REAL (Bybit UTA Live)"
+    add_log(f"🔄 Modo alterado para: {label} | Saldo: ${bot_state.get('usdt_balance', 0):.2f} USDT")
+    return jsonify({
+        "status": "ok",
+        "account_mode": requested_mode,
+        "usdt_balance": bot_state.get("usdt_balance", 0.0),
+        "message": f"Alternado para {label}"
+    })
+
+
+@app.route('/api/paper/reset', methods=['POST'])
+def reset_paper_balance():
+    """Permite definir ou resetar o saldo virtual da Conta de Teste."""
+    global exchange, last_balance_update
+    data = request.get_json() or {}
+    new_balance = float(data.get('balance', 100.0))
+    if new_balance < 1.0:
+        return jsonify({"error": "O saldo de teste deve ser de pelo menos $1.00 USDT."}), 400
+
+    paper_ex = get_exchange(mode="PAPER")
+    if hasattr(paper_ex, 'reset_balance'):
+        paper_ex.reset_balance(new_balance)
+
+    if bot_state.get("account_mode", "LIVE").upper() == "PAPER":
+        exchange = paper_ex
+        bot_state["usdt_balance"] = new_balance
+        bot_state["open_positions_count"] = 0
+        bot_state["unrealized_pnl"] = 0.0
+        last_balance_update = 0
+
+    return jsonify({
+        "status": "ok",
+        "usdt_balance": new_balance,
+        "message": f"Saldo da Conta de Teste redefinido para ${new_balance:.2f} USDT!"
+    })
 
 
 @app.route('/api/config/keys', methods=['POST'])
@@ -132,12 +200,14 @@ def status():
     import time
     now = time.time()
     
-    bot_state["api_configured"] = has_valid_credentials()
-    if now - last_balance_update > 10 and bot_state["api_configured"]:
+    is_paper = (bot_state.get("account_mode", "LIVE").upper() == "PAPER")
+    bot_state["api_configured"] = has_valid_credentials() or is_paper
+    update_interval = 3 if is_paper else 10
+    if now - last_balance_update > update_interval and bot_state["api_configured"]:
         last_balance_update = now
-        if not exchange:
+        if not exchange or getattr(exchange, 'is_paper', False) != is_paper:
             try:
-                exchange = get_exchange()
+                exchange = get_exchange(mode=bot_state.get("account_mode", "LIVE"))
             except:
                 pass
         if exchange:
@@ -206,10 +276,11 @@ def status():
 
 @app.route('/api/balance')
 def refresh_balance():
-    """Rota para ler o saldo atual da Bybit a qualquer momento."""
+    """Rota para ler o saldo atual da Bybit (ou Conta de Teste) a qualquer momento."""
     global exchange
-    if not exchange:
-        exchange = get_exchange()
+    is_paper = (bot_state.get("account_mode", "LIVE").upper() == "PAPER")
+    if not exchange or getattr(exchange, 'is_paper', False) != is_paper:
+        exchange = get_exchange(mode=bot_state.get("account_mode", "LIVE"))
     try:
         resp = exchange.privateGetV5AccountWalletBalance({'accountType': 'UNIFIED'})
         account_data = resp.get('result', {}).get('list', [{}])[0]
@@ -234,12 +305,13 @@ def refresh_balance():
 
 @app.route('/api/positions')
 def get_positions():
-    """Busca todas as posições abertas na Bybit."""
+    """Busca todas as posições abertas na Bybit (ou no Simulador Paper)."""
     global exchange
-    if not has_valid_credentials():
+    is_paper = (bot_state.get("account_mode", "LIVE").upper() == "PAPER")
+    if not is_paper and not has_valid_credentials():
         return jsonify({"positions": [], "status": "unconfigured"})
-    if not exchange:
-        exchange = get_exchange()
+    if not exchange or getattr(exchange, 'is_paper', False) != is_paper:
+        exchange = get_exchange(mode=bot_state.get("account_mode", "LIVE"))
     if not exchange:
         return jsonify({"positions": [], "status": "unconfigured"})
     try:
@@ -282,8 +354,9 @@ def get_positions():
 def close_all():
     """Fecha todas as posições abertas e cancela ordens pendentes imediatamente."""
     global exchange
-    if not exchange:
-        exchange = get_exchange()
+    is_paper = (bot_state.get("account_mode", "LIVE").upper() == "PAPER")
+    if not exchange or getattr(exchange, 'is_paper', False) != is_paper:
+        exchange = get_exchange(mode=bot_state.get("account_mode", "LIVE"))
     try:
         # 1. Cancela todas as ordens abertas
         try:
@@ -316,8 +389,9 @@ def close_all():
 def close_symbol():
     """Fecha uma posição específica a mercado."""
     global exchange
-    if not exchange:
-        exchange = get_exchange()
+    is_paper = (bot_state.get("account_mode", "LIVE").upper() == "PAPER")
+    if not exchange or getattr(exchange, 'is_paper', False) != is_paper:
+        exchange = get_exchange(mode=bot_state.get("account_mode", "LIVE"))
     try:
         data = request.get_json() or {}
         symbol = data.get('symbol')
@@ -922,9 +996,10 @@ def consolidate_to_pix():
 @app.route('/api/history')
 def get_history():
     global exchange
-    if not exchange:
+    is_paper = (bot_state.get("account_mode", "LIVE").upper() == "PAPER")
+    if not exchange or getattr(exchange, 'is_paper', False) != is_paper:
         try:
-            exchange = get_exchange()
+            exchange = get_exchange(mode=bot_state.get("account_mode", "LIVE"))
         except Exception as e:
             return jsonify({"error": f"Erro de conexão: {e}", "history": []})
             
@@ -984,8 +1059,9 @@ def start_bot():
     if bot_state["is_running"]:
         return jsonify({"message": "Bot já está rodando!"}), 400
         
-    if not exchange:
-        exchange = get_exchange()
+    is_paper = (bot_state.get("account_mode", "LIVE").upper() == "PAPER")
+    if not exchange or getattr(exchange, 'is_paper', False) != is_paper:
+        exchange = get_exchange(mode=bot_state.get("account_mode", "LIVE"))
         if not check_connection(exchange):
             add_log("Falha ao conectar na Bybit. Verifique as credenciais.")
             return jsonify({"message": "Erro de conexão"}), 500

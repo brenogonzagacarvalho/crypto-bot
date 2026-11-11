@@ -475,30 +475,30 @@ class RiskOfficerSkill:
             new_sl = None
             reason_label = None
 
-            # Estágio 2: Trailing Stop Progressivo (>= 1.6R ou >= 0.60% de lucro na moeda)
-            if r_multiple >= 1.6 or move_pct >= 0.60:
+            # Estágio 2: Trailing Stop Progressivo (>= 1.25R ou >= 0.55% de lucro na moeda)
+            if r_multiple >= 1.25 or move_pct >= 0.55:
                 # Protege 65% do movimento conquistado
                 locked_move = move_fav * 0.65
                 candidate_sl = (entry_price + locked_move) if is_long else (entry_price - locked_move)
-                if is_long and (current_sl <= 0 or candidate_sl > current_sl * 1.0012):
+                if is_long and (current_sl <= 0 or candidate_sl > current_sl * 1.0010):
                     new_sl = candidate_sl
-                    reason_label = f"🛡️ Trailing Stop (+{r_multiple:.1f}R)"
-                elif not is_long and (current_sl <= 0 or candidate_sl < current_sl * 0.9988):
+                    reason_label = f"🛡️ Trailing Stop (+{r_multiple:.2f}R)"
+                elif not is_long and (current_sl <= 0 or candidate_sl < current_sl * 0.9990):
                     new_sl = candidate_sl
-                    reason_label = f"🛡️ Trailing Stop (+{r_multiple:.1f}R)"
+                    reason_label = f"🛡️ Trailing Stop (+{r_multiple:.2f}R)"
 
-            # Estágio 1: Breakeven Lock (>= 1.0R ou >= 0.32% de lucro na moeda)
-            elif (r_multiple >= 1.0 or move_pct >= 0.32) and not meta_dict.get('breakeven_locked'):
-                fee_buffer = entry_price * 0.0016  # 0.16% cobre taxas e garante micro-lucro
+            # Estágio 1: Breakeven Lock (>= 0.95R ou >= 0.35% de lucro na moeda)
+            elif (r_multiple >= 0.95 or move_pct >= 0.35) and not meta_dict.get('breakeven_locked'):
+                fee_buffer = max(entry_price * 0.0016, sl_dist * 0.25)  # Garante +0.25R (cobre taxas + lucro líquido)
                 candidate_sl = (entry_price + fee_buffer) if is_long else (entry_price - fee_buffer)
                 if is_long and (current_sl <= 0 or candidate_sl > current_sl):
                     new_sl = candidate_sl
                     meta_dict['breakeven_locked'] = True
-                    reason_label = "🔒 Breakeven (+Taxas) Ativado"
+                    reason_label = "🔒 Breakeven (+0.25R) Ativado"
                 elif not is_long and (current_sl <= 0 or candidate_sl < current_sl):
                     new_sl = candidate_sl
                     meta_dict['breakeven_locked'] = True
-                    reason_label = "🔒 Breakeven (+Taxas) Ativado"
+                    reason_label = "🔒 Breakeven (+0.25R) Ativado"
 
             if new_sl is not None:
                 if ExecutionProtocolSkill.update_server_stop_loss(exchange, symbol, new_sl):

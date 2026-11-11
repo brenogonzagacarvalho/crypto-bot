@@ -251,7 +251,7 @@ def run_claude_quant_alpha(exchange, symbol='MULTI', leverage=20, check_interval
                         leverage=leverage,
                         risk_margin_pct=0.15,
                         atr_sl_mult=2.0,
-                        rr_ratio=2.8,
+                        rr_ratio=1.75,
                     )
 
                     if not sizing['valid']:

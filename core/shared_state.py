@@ -3,6 +3,7 @@ from datetime import datetime
 # Dicionário em memória para compartilhar dados entre a Thread do Bot e a Thread do Servidor Flask
 bot_state = {
     "is_running": False,
+    "account_mode": "LIVE",  # "LIVE" (Conta Real) ou "PAPER" (Conta de Teste / Simulador)
     "status": "🔴 Desligado",
     "current_price": 0.0,
     "rsi": 0.0,

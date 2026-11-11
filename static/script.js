@@ -1,4 +1,5 @@
 let fetchInterval;
+let currentAccountMode = "LIVE";
 
 async function fetchStatus() {
     try {
@@ -14,6 +15,48 @@ function updateUI(data) {
     const apiBanner = document.getElementById('api-key-banner');
     if (apiBanner) {
         apiBanner.style.display = (data.api_configured === false) ? 'block' : 'none';
+    }
+
+    // Atualiza Modo da Conta (LIVE = Conta Normal | PAPER = Conta de Teste)
+    currentAccountMode = data.account_mode || "LIVE";
+    const modeBtn = document.getElementById('account-mode-btn');
+    const resetBtn = document.getElementById('reset-paper-btn');
+    const walletTitle = document.getElementById('wallet-title');
+    const walletPill = document.getElementById('wallet-mode-pill');
+    const walletCard = document.getElementById('wallet-card');
+
+    if (modeBtn) {
+        if (currentAccountMode === "PAPER") {
+            modeBtn.innerHTML = "🧪 Conta de Teste (Ativa) · Ir p/ Normal";
+            modeBtn.style.borderColor = "#f59e0b";
+            modeBtn.style.background = "rgba(245, 158, 11, 0.2)";
+            modeBtn.style.color = "#fbbf24";
+            modeBtn.style.boxShadow = "0 0 12px rgba(245, 158, 11, 0.35)";
+            if (resetBtn) resetBtn.style.display = "inline-block";
+            if (walletTitle) walletTitle.textContent = "Carteira (Conta de Teste)";
+            if (walletPill) {
+                walletPill.textContent = "SIMULADOR REAL-TIME";
+                walletPill.style.background = "rgba(245, 158, 11, 0.2)";
+                walletPill.style.color = "#fbbf24";
+                walletPill.style.borderColor = "rgba(245, 158, 11, 0.5)";
+            }
+            if (walletCard) walletCard.style.borderColor = "rgba(245, 158, 11, 0.45)";
+        } else {
+            modeBtn.innerHTML = "🟢 Conta Normal (Real) · Ir p/ Teste";
+            modeBtn.style.borderColor = "#10b981";
+            modeBtn.style.background = "rgba(16, 185, 129, 0.15)";
+            modeBtn.style.color = "#10b981";
+            modeBtn.style.boxShadow = "none";
+            if (resetBtn) resetBtn.style.display = "none";
+            if (walletTitle) walletTitle.textContent = "Carteira (Bybit Real)";
+            if (walletPill) {
+                walletPill.textContent = "REAL";
+                walletPill.style.background = "rgba(16, 185, 129, 0.15)";
+                walletPill.style.color = "#10b981";
+                walletPill.style.borderColor = "rgba(16, 185, 129, 0.4)";
+            }
+            if (walletCard) walletCard.style.borderColor = "";
+        }
     }
 
     // Atualiza Botões e Status
@@ -713,5 +756,64 @@ async function consolidateToPix() {
         if (typeof fetchEarnData === 'function') {
             fetchEarnData();
         }
+    }
+}
+
+async function toggleAccountMode() {
+    const targetMode = currentAccountMode === "LIVE" ? "PAPER" : "LIVE";
+    const modeLabel = targetMode === "PAPER"
+        ? "🧪 CONTA DE TESTE (Simulador com Dados Reais da Bybit)"
+        : "🟢 CONTA NORMAL (Dinheiro Real na Bybit)";
+
+    if (!confirm(`Deseja alternar para a ${modeLabel}?`)) {
+        return;
+    }
+
+    try {
+        const res = await fetch('/api/account_mode', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mode: targetMode })
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) {
+            alert("⚠️ " + (data.error || "Não foi possível trocar de conta."));
+            return;
+        }
+        fetchStatus();
+        if (typeof fetchPositions === 'function') fetchPositions();
+        if (typeof fetchHistory === 'function') fetchHistory();
+    } catch (err) {
+        console.error("Erro ao alternar modo da conta:", err);
+        alert("Erro de rede ao alternar o modo da conta.");
+    }
+}
+
+async function resetPaperBalance() {
+    const input = prompt("Digite o novo saldo inicial (em USDT) para sua Conta de Teste:", "100.00");
+    if (input === null) return;
+
+    const balance = parseFloat(input.replace(',', '.'));
+    if (isNaN(balance) || balance <= 0) {
+        alert("Informe um valor válido maior que zero (ex: 100).");
+        return;
+    }
+
+    try {
+        const res = await fetch('/api/paper/reset', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ balance: balance })
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) {
+            alert("⚠️ " + (data.error || "Erro ao resetar saldo de teste."));
+            return;
+        }
+        fetchStatus();
+        if (typeof fetchPositions === 'function') fetchPositions();
+    } catch (err) {
+        console.error("Erro ao resetar saldo de teste:", err);
+        alert("Erro de rede ao resetar saldo de teste.");
     }
 }

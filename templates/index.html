@@ -23,7 +23,15 @@
                     <button id="tab-btn-earn" class="tab-btn" onclick="switchTab('earn')">Bybit Earn 💰</button>
                 </nav>
             </div>
-            <div id="status-badge" class="badge">🔴 Desligado</div>
+            <div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
+                <button id="account-mode-btn" onclick="toggleAccountMode()" title="Alternar entre Conta Normal (Real) e Conta de Teste (Simulador com Dados Reais da Bybit)" style="padding: 0.5rem 1rem; border-radius: 999px; font-weight: 700; font-size: 0.85rem; cursor: pointer; border: 1px solid #10b981; background: rgba(16, 185, 129, 0.15); color: #10b981; transition: all 0.2s ease;">
+                    🟢 Conta Normal (Real)
+                </button>
+                <button id="reset-paper-btn" onclick="resetPaperBalance()" title="Redefinir ou alterar o saldo virtual da Conta de Teste" style="display: none; padding: 0.45rem 0.85rem; border-radius: 999px; font-weight: 600; font-size: 0.8rem; cursor: pointer; border: 1px solid #f59e0b; background: rgba(245, 158, 11, 0.15); color: #fbbf24; transition: all 0.2s ease;">
+                    🔄 Ajustar Saldo Teste
+                </button>
+                <div id="status-badge" class="badge">🔴 Desligado</div>
+            </div>
         </header>
 
         <main>
@@ -42,8 +50,11 @@
             <div id="tab-dashboard" class="tab-content active">
                 <div class="cards-container">
                     <!-- Card de Saldo -->
-                    <div class="glass-card balance-card">
-                        <h2>Carteira (Bybit)</h2>
+                    <div class="glass-card balance-card" id="wallet-card">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.6rem;">
+                            <h2 id="wallet-title" style="margin-bottom: 0;">Carteira (Bybit Real)</h2>
+                            <span id="wallet-mode-pill" style="font-size: 0.7rem; padding: 0.2rem 0.55rem; border-radius: 6px; font-weight: 700; background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.4);">REAL</span>
+                        </div>
                         
                         <div style="display: flex; flex-direction: column; gap: 0.8rem;">
                             <!-- Conta Unificada -->
