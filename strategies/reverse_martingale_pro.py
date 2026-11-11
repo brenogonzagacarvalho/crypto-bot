@@ -83,7 +83,7 @@ def run_reverse_martingale_pro(exchange, symbol='MULTI', leverage=25):
         ExecutionProtocolSkill.setup_symbol_derivatives(exchange, sym, leverage, margin_mode='cross')
 
     # Sistema de 4 Níveis Soros (Risco Progressivo apenas com lucro acumulado)
-    risco_niveis = {0: 0.10, 1: 0.16, 2: 0.24, 3: 0.32}
+    risco_niveis = {0: 0.25, 1: 0.35, 2: 0.50, 3: 0.65}
     wins_consecutivos = 0
 
     available_usd, total_equity = get_available_margin_usd(exchange)

@@ -95,7 +95,7 @@ def run_survival_scalper(exchange, symbol='MULTI'):
     init_trade_log()
     config = load_config()
     leverage = int(config.get('max_leverage', 20))
-    risk_pct = float(config.get('risk_per_trade', 0.18))
+    risk_pct = float(config.get('risk_per_trade', 0.38))
     min_balance = float(config.get('min_balance', 2.0))
 
     add_log(f"{'=' * 58}")

@@ -92,8 +92,8 @@ def run_vwap_deviation_strategy(exchange, symbol='MULTI', leverage=20, check_int
 
     bot_state["usdt_balance"] = total_equity
     initial_equity = total_equity
-    daily_profit_target = max(0.50, initial_equity * 0.08)
-    daily_loss_limit = min(-0.30, -initial_equity * 0.04)
+    daily_profit_target = max(1.50, initial_equity * 0.18)
+    daily_loss_limit = min(-0.80, -initial_equity * 0.10)
 
     active_positions = {}
     MAX_POSITIONS = 2
@@ -234,7 +234,7 @@ def run_vwap_deviation_strategy(exchange, symbol='MULTI', leverage=20, check_int
                         atr=atr,
                         collateral_usd=collateral_usd,
                         leverage=leverage,
-                        risk_margin_pct=0.14,
+                        risk_margin_pct=0.35,
                         atr_sl_mult=1.8,
                         rr_ratio=2.2,
                         custom_tp_price=custom_tp,

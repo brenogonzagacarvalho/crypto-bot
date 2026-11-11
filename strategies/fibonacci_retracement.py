@@ -40,7 +40,7 @@ from core.quant_skills import (
 LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'logs')
 LOG_FILE = os.path.join(LOG_DIR, 'fibonacci_trades.csv')
 
-RISK_PER_TRADE_PCT = 0.14  # 14% da margem disponível por operação
+RISK_PER_TRADE_PCT = 0.35  # 35% da margem disponível por operação
 
 
 def init_trade_log():
@@ -102,8 +102,8 @@ def run_fibonacci_strategy(exchange, symbol='MULTI', leverage=20, check_interval
 
     bot_state["usdt_balance"] = total_equity
     initial_equity_usd = total_equity
-    daily_profit_target_usd = max(0.50, 0.08 * initial_equity_usd)
-    daily_loss_limit_usd = min(-0.30, -0.04 * initial_equity_usd)
+    daily_profit_target_usd = max(1.50, 0.18 * initial_equity_usd)
+    daily_loss_limit_usd = min(-0.80, -0.10 * initial_equity_usd)
 
     active_positions = {}
     last_trade_swing = {}

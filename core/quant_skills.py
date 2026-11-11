@@ -362,7 +362,7 @@ class RiskOfficerSkill:
         atr,
         collateral_usd,
         leverage,
-        risk_margin_pct=0.12,
+        risk_margin_pct=0.35,
         atr_sl_mult=2.0,
         rr_ratio=2.5,
         min_sl_pct=0.0045,
@@ -392,9 +392,10 @@ class RiskOfficerSkill:
         else:
             tp_price = (entry_price + sl_dist * rr_ratio) if is_buy else (entry_price - sl_dist * rr_ratio)
 
-        # 2. Dimensionamento da Margem Alocada
-        margin_to_use = max(1.0, collateral_usd * risk_margin_pct)
-        margin_to_use = min(margin_to_use, collateral_usd * 0.85)
+        # 2. Dimensionamento da Margem Alocada (Entradas Fortes: piso de $5 ou 35%+ da margem disponível)
+        min_margin_floor = min(5.0, collateral_usd * 0.50)
+        margin_to_use = max(min_margin_floor, collateral_usd * risk_margin_pct)
+        margin_to_use = min(margin_to_use, collateral_usd * 0.90)
         target_notional_usd = margin_to_use * leverage
         raw_amount = target_notional_usd / entry_price
 

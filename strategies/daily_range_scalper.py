@@ -93,8 +93,8 @@ def run_daily_range_strategy(exchange, symbol='MULTI', leverage=20, check_interv
 
     bot_state["usdt_balance"] = total_equity
     initial_equity_usd = total_equity
-    daily_profit_target_usd = max(0.50, 0.08 * initial_equity_usd)
-    daily_loss_limit_usd = min(-0.30, -0.04 * initial_equity_usd)
+    daily_profit_target_usd = max(1.50, 0.18 * initial_equity_usd)
+    daily_loss_limit_usd = min(-0.80, -0.10 * initial_equity_usd)
 
     active_positions = {}
     MAX_POSITIONS = 2
@@ -243,7 +243,7 @@ def run_daily_range_strategy(exchange, symbol='MULTI', leverage=20, check_interv
                         atr=atr,
                         collateral_usd=collateral_usd,
                         leverage=leverage,
-                        risk_margin_pct=0.14,
+                        risk_margin_pct=0.35,
                         atr_sl_mult=2.0,
                         rr_ratio=2.6,
                     )

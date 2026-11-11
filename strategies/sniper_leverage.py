@@ -95,8 +95,8 @@ def run_sniper_leverage(exchange, symbol='MULTI', leverage=25, check_interval=8)
 
     bot_state["usdt_balance"] = total_equity
     starting_equity = total_equity
-    daily_target_usd = starting_equity * 1.12
-    daily_stop_usd = starting_equity * 0.95
+    daily_target_usd = starting_equity * 1.20
+    daily_stop_usd = starting_equity * 0.90
 
     active_positions = {}
     MAX_POSITIONS = 1  # Sniper foca em 1 tiro cirúrgico por vez
@@ -223,7 +223,7 @@ def run_sniper_leverage(exchange, symbol='MULTI', leverage=25, check_interval=8)
                         atr=atr,
                         collateral_usd=collateral_usd,
                         leverage=leverage,
-                        risk_margin_pct=0.18,
+                        risk_margin_pct=0.45,
                         atr_sl_mult=1.8,
                         rr_ratio=2.6,
                     )

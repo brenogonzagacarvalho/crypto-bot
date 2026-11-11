@@ -102,8 +102,8 @@ def run_claude_quant_alpha(exchange, symbol='MULTI', leverage=20, check_interval
 
     bot_state["usdt_balance"] = total_equity
     initial_equity = total_equity
-    daily_profit_target = max(0.60, initial_equity * 0.08)   # +8% meta diária
-    daily_loss_limit = min(-0.35, -initial_equity * 0.04)    # -4% circuit breaker diário
+    daily_profit_target = max(1.50, initial_equity * 0.18)   # +18% meta diária
+    daily_loss_limit = min(-0.80, -initial_equity * 0.10)    # -10% circuit breaker diário
 
     active_positions = {}
     MAX_POSITIONS = 2
@@ -249,7 +249,7 @@ def run_claude_quant_alpha(exchange, symbol='MULTI', leverage=20, check_interval
                         atr=atr,
                         collateral_usd=collateral_usd,
                         leverage=leverage,
-                        risk_margin_pct=0.15,
+                        risk_margin_pct=0.35,
                         atr_sl_mult=2.0,
                         rr_ratio=1.75,
                     )
