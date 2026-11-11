@@ -106,6 +106,8 @@ def run_grok_whale_flow(exchange, symbol='MULTI', leverage=25, check_interval=6)
     daily_loss_limit = min(-0.80, -initial_equity * 0.10)    # -10% circuit breaker diário
 
     active_positions = {}
+    loss_cooldown = {}
+    COOLDOWN_AFTER_LOSS_SEC = 900  # 15 min de cooldown após Stop Loss
     MAX_POSITIONS = 2
     scan_count = 0
 
@@ -170,6 +172,9 @@ def run_grok_whale_flow(exchange, symbol='MULTI', leverage=25, check_interval=6)
                     exit_p = details['exit_price'] or active_positions[sym]['entry_price']
                     emoji = "🏆 LUCRO" if pnl > 0 else "💀 LOSS"
                     add_log(f"{emoji} [GROK FLOW] {sym} encerrada | PnL: ${pnl:+.4f}")
+                    if pnl < 0:
+                        loss_cooldown[sym] = time.time() + COOLDOWN_AFTER_LOSS_SEC
+                        add_log(f"🛡️ [Anti-Whipsaw] {sym.split('/')[0]} em cooldown por 15 min após Stop Loss.")
                     log_trade(
                         sym, 'CLOSE', 'SAÍDA', active_positions[sym]['side'],
                         exit_p, None, None, None, None, leverage, None, None,
@@ -187,6 +192,8 @@ def run_grok_whale_flow(exchange, symbol='MULTI', leverage=25, check_interval=6)
                     if not bot_state["is_running"] or len(active_positions) >= MAX_POSITIONS:
                         break
                     if sym in active_positions:
+                        continue
+                    if sym in loss_cooldown and time.time() < loss_cooldown[sym]:
                         continue
 
                     coin_name = sym.split('/')[0]

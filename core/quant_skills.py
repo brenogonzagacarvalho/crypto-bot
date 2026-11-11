@@ -172,19 +172,30 @@ class MarketRegimeSkill:
 
         if candle:
             if candle['pattern_bias'] == 'BULLISH':
-                score += 10.0
+                score += 22.0
                 reasons.append(candle['pattern_name'])
             elif candle['pattern_bias'] == 'BEARISH':
-                score -= 10.0
+                score -= 22.0
                 reasons.append(candle['pattern_name'])
+
+        # Penaliza exaustão/sobreextensão (evita comprar topo esticado ou vender fundo esticado)
+        dist_ema21_atr = (abs(current_price - ema21) / atr) if (atr and atr > 0) else 0.0
+        is_overextended_bull = (current_price > ema21 and (dist_ema21_atr > 1.85 or rsi > 68))
+        is_overextended_bear = (current_price < ema21 and (dist_ema21_atr > 1.85 or rsi < 32))
+        if is_overextended_bull and score > 0:
+            score -= 25.0
+            reasons.append(f"Esticado Topo ({dist_ema21_atr:.1f}x ATR)")
+        elif is_overextended_bear and score < 0:
+            score += 25.0
+            reasons.append(f"Esticado Fundo ({dist_ema21_atr:.1f}x ATR)")
 
         score = max(-100.0, min(100.0, score))
 
-        # Classificação do Regime
+        # Classificação do Regime (Mais rigorosa contra ruído/chop)
         atr_pct = (atr / current_price) * 100.0 if current_price > 0 else 0.0
-        if atr_pct > 2.8 and adx < 15:
+        if (atr_pct > 2.2 and adx < 18) or adx < 14:
             regime = 'HIGH_VOL_CHOP'
-        elif squeeze_Expanding or (is_squeeze and adx >= 20 and rvol >= 1.4):
+        elif (squeeze_Expanding and adx >= 17 and rvol >= 1.25) or (is_squeeze and adx >= 20 and rvol >= 1.4):
             regime = 'SQUEEZE_BREAKOUT'
         elif adx >= 21 and current_price > ema50 and ema21 >= ema50 and htf_trend != 'DOWNTREND':
             regime = 'STRONG_UPTREND'
@@ -217,6 +228,9 @@ class MarketRegimeSkill:
             'z_score': z_score,
             'atr': atr,
             'atr_pct': atr_pct,
+            'dist_ema21_atr': dist_ema21_atr,
+            'is_overextended_bull': is_overextended_bull,
+            'is_overextended_bear': is_overextended_bear,
             'adx': adx,
             'plus_di': plus_di,
             'minus_di': minus_di,

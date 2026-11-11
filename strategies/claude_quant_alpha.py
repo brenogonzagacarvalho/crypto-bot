@@ -106,6 +106,8 @@ def run_claude_quant_alpha(exchange, symbol='MULTI', leverage=20, check_interval
     daily_loss_limit = min(-0.80, -initial_equity * 0.10)    # -10% circuit breaker diário
 
     active_positions = {}
+    loss_cooldown = {}  # {symbol: timestamp_liberacao} para evitar Whipsaw / Revenge Trade
+    COOLDOWN_AFTER_LOSS_SEC = 900  # 15 minutos de quarentena na moeda após Stop Loss
     MAX_POSITIONS = 2
     scan_count = 0
 
@@ -171,6 +173,9 @@ def run_claude_quant_alpha(exchange, symbol='MULTI', leverage=20, check_interval
                     exit_p = details['exit_price'] or active_positions[sym]['entry_price']
                     emoji = "🏆 LUCRO" if pnl > 0 else "💀 LOSS"
                     add_log(f"{emoji} [CLAUDE ALPHA] {sym} fechada | PnL Líquido: ${pnl:+.4f}")
+                    if pnl < 0:
+                        loss_cooldown[sym] = time.time() + COOLDOWN_AFTER_LOSS_SEC
+                        add_log(f"🛡️ [Anti-Whipsaw] {sym.split('/')[0]} em cooldown por 15 min após Stop Loss.")
                     log_trade(
                         sym, 'CLOSED', 'SAÍDA', active_positions[sym]['side'],
                         exit_p, None, None, None, None, leverage, None, None,
@@ -189,6 +194,10 @@ def run_claude_quant_alpha(exchange, symbol='MULTI', leverage=20, check_interval
                         break
                     if sym in active_positions:
                         continue
+                    if sym in loss_cooldown and time.time() < loss_cooldown[sym]:
+                        rem_min = int((loss_cooldown[sym] - time.time()) // 60) + 1
+                        add_log(f"  ⏳ {sym.split('/')[0]}: Em quarentena Anti-Whipsaw ({rem_min}m restantes)")
+                        continue
 
                     coin_name = sym.split('/')[0]
                     bot_state["coin_name"] = coin_name
@@ -205,6 +214,9 @@ def run_claude_quant_alpha(exchange, symbol='MULTI', leverage=20, check_interval
                     rvol = analysis['rvol']
                     atr = analysis['atr']
                     vwap = analysis['vwap']
+                    htf_trend = analysis['htf_trend']
+                    candle = analysis.get('candle')
+                    candle_bias = candle.get('pattern_bias') if candle else None
 
                     bot_state["current_price"] = price
                     bot_state["rsi"] = rsi
@@ -222,16 +234,30 @@ def run_claude_quant_alpha(exchange, symbol='MULTI', leverage=20, check_interval
                         f"ADX: {adx:.1f} | RVOL: {rvol:.2f}x | OBI: {obi:+.2f}"
                     )
 
-                    # Critérios de Entrada LONG (Confluência Alta ou Squeeze Breakout Bullish)
+                    # Critérios de Entrada LONG (Exige: Sem Candle Bearish, Sem Topo Esticado, OBI Comprador, Volume Ativo e HTF não-baixa)
                     is_long_signal = (
-                        (score >= 60.0 and regime in ('STRONG_UPTREND', 'SQUEEZE_BREAKOUT') and price > vwap and obi >= -0.08)
-                        or (regime == 'SQUEEZE_BREAKOUT' and score >= 45.0 and rvol >= 1.35 and obi >= 0.08 and price > analysis['ema21'])
+                        candle_bias != 'BEARISH'
+                        and not analysis.get('is_overextended_bull', False)
+                        and htf_trend != 'DOWNTREND'
+                        and rvol >= 0.90
+                        and adx >= 17.0
+                        and (
+                            (score >= 60.0 and regime in ('STRONG_UPTREND', 'SQUEEZE_BREAKOUT') and price > vwap and obi >= 0.04)
+                            or (regime == 'SQUEEZE_BREAKOUT' and score >= 52.0 and rvol >= 1.35 and obi >= 0.10 and price > analysis['ema21'])
+                        )
                     )
 
-                    # Critérios de Entrada SHORT (Confluência Baixa ou Squeeze Breakout Bearish)
+                    # Critérios de Entrada SHORT (Exige: Sem Candle Bullish, Sem Fundo Esticado, OBI Vendedor, Volume Ativo e HTF não-alta)
                     is_short_signal = (
-                        (score <= -60.0 and regime in ('STRONG_DOWNTREND', 'SQUEEZE_BREAKOUT') and price < vwap and obi <= 0.08)
-                        or (regime == 'SQUEEZE_BREAKOUT' and score <= -45.0 and rvol >= 1.35 and obi <= -0.08 and price < analysis['ema21'])
+                        candle_bias != 'BULLISH'
+                        and not analysis.get('is_overextended_bear', False)
+                        and htf_trend != 'UPTREND'
+                        and rvol >= 0.90
+                        and adx >= 17.0
+                        and (
+                            (score <= -60.0 and regime in ('STRONG_DOWNTREND', 'SQUEEZE_BREAKOUT') and price < vwap and obi <= -0.04)
+                            or (regime == 'SQUEEZE_BREAKOUT' and score <= -52.0 and rvol >= 1.35 and obi <= -0.10 and price < analysis['ema21'])
+                        )
                     )
 
                     if not is_long_signal and not is_short_signal:
